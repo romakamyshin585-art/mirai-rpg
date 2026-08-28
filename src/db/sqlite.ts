@@ -24,13 +24,19 @@ async function getDb(): Promise<SqliteDb> {
   // Lazy import — keeps test/jest from trying to load native module
   // at parse time. The `as unknown` cast avoids importing the type
   // at the top level (which also touches the native module via .d.ts).
+  console.log('[MiraiRPG] sqlite: importing expo-sqlite');
   const mod = await import('expo-sqlite');
+  console.log('[MiraiRPG] sqlite: opening database');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db: SqliteDb = (await (mod as any).openDatabaseAsync('mirai_rpg.db')) as SqliteDb;
-  // PRAGMA: foreign keys ON, WAL for safe concurrency
-  await db.execAsync('PRAGMA foreign_keys = ON;');
-  await db.execAsync('PRAGMA journal_mode = WAL;');
+  console.log('[MiraiRPG] sqlite: opened, setting PRAGMAs');
+  // PRAGMA: foreign keys ON, WAL for safe concurrency.
+  // Each PRAGMA wrapped individually so a single failure (e.g. on an
+  // older Android SQLite build) doesn't kill the whole init.
+  try { await db.execAsync('PRAGMA foreign_keys = ON;'); } catch (e) { console.warn('[MiraiRPG] PRAGMA fk failed:', e); }
+  try { await db.execAsync('PRAGMA journal_mode = WAL;'); } catch (e) { console.warn('[MiraiRPG] PRAGMA wal failed:', e); }
   cached = db;
+  console.log('[MiraiRPG] sqlite: ready');
   return db;
 }
 
