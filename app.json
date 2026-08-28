@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Mirai RPG",
+    "slug": "mirai-rpg",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "mirairpg",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0E0F12"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0E0F12"
+      },
+      "package": "com.mirai.rpg"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-sqlite",
+      "expo-secure-store"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "43eba812-efba-4fc5-a44b-0cf5d64f6827"
+      }
+    },
+    "owner": "scorpions585"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+dist/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+*.log
+.DS_Store
+ios/
+git-daemon-export-ok
