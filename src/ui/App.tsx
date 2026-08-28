@@ -24,18 +24,38 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      const c = await AppContext.init();
-      setCtx(c);
-      const isAuthed = await c.auth.isAuthenticated();
-      const isRegistered = await c.auth.isRegistered();
-      if (!isRegistered) {
-        setAuth('guest');
-      } else {
-        setAuth(isAuthed ? 'authed' : 'guest');
+      try {
+        const c = await AppContext.init();
+        if (cancelled) return;
+        setCtx(c);
+        const isAuthed = await c.auth.isAuthenticated();
+        const isRegistered = await c.auth.isRegistered();
+        if (cancelled) return;
+        if (!isRegistered) {
+          setAuth('guest');
+        } else {
+          setAuth(isAuthed ? 'authed' : 'guest');
+        }
+      } catch (e: any) {
+        console.error('[MiraiRPG] init failed:', e);
+        if (!cancelled) setInitError(e?.message || String(e));
       }
     })();
+    return () => { cancelled = true; };
   }, []);
+
+  const [initError, setInitError] = useState<string | null>(null);
+
+  if (initError) {
+    return (
+      <View style={{ flex: 1, backgroundColor: COLORS.bg, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+        <Text style={{ color: COLORS.danger, fontSize: 18, marginBottom: 12 }}>Ошибка инициализации</Text>
+        <Text style={{ color: COLORS.text, fontSize: 13, textAlign: 'center' }}>{initError}</Text>
+      </View>
+    );
+  }
 
   if (!ctx || auth === 'loading') {
     return (

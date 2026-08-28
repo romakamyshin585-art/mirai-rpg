@@ -31,18 +31,23 @@ export class AppContext {
 
   static async init(): Promise<AppContext> {
     if (AppContext.instance) return AppContext.instance;
+    console.log('[MiraiRPG] init: starting');
     const ctx = new AppContext();
+    console.log('[MiraiRPG] init: opening DB');
     ctx.db = await ctx._openDb();
+    console.log('[MiraiRPG] init: migrate');
     await migrate(ctx.db);
+    console.log('[MiraiRPG] init: seed');
     await seedIfEmpty(ctx.db);
     ctx.auth = new AuthService();
     ctx.character = new CharacterService(ctx.db);
     ctx.quest = new QuestService(ctx.db);
     ctx.progression = new ProgressionService(ctx.db);
     ctx.achievement = new AchievementService(ctx.db);
+    console.log('[MiraiRPG] init: ensureUserId');
     ctx.userId = await ctx._ensureUserId();
-    // Lazy init character (not awaited to keep init() sync-ish; screens will block)
-    void ctx.character.getOrCreate(ctx.userId, 'Hero').catch(() => {});
+    console.log('[MiraiRPG] init: done, userId=' + ctx.userId);
+    void ctx.character.getOrCreate(ctx.userId, 'Hero').catch((e) => console.warn('[MiraiRPG] char init failed:', e));
     AppContext.instance = ctx;
     return ctx;
   }
