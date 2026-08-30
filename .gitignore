@@ -9,4 +9,3 @@ android/local.properties
 *.log
 .DS_Store
 ios/
-git-daemon-export-ok

@@ -13,7 +13,6 @@
     "build:dev": "eas build --platform android --profile development --non-interactive"
   },
   "dependencies": {
-    "@react-native-async-storage/async-storage": "^1.23.1",
     "bcryptjs": "^2.4.3",
     "expo": "~52.0.0",
     "expo-asset": "~11.0.0",

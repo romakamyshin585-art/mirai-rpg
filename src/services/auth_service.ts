@@ -1,16 +1,13 @@
 /**
- * Local auth (no backend). One user.
+ * Локальная авторизация (без бэкенда). Один пользователь.
  *
- * Password hash is stored in expo-secure-store with an AsyncStorage
- * mirror so we never block indefinitely on Android Keystore races.
- * Every SecureStore call is wrapped in a 3s timeout.
+ * Пароль хранится в expo-secure-store. Все вызовы обёрнуты в таймаут,
+ * чтобы на Android 10+ с глючным Keystore UI не зависало вечно.
  *
- * bcryptjs (pure JS) is slow on RN, so we use cost 8 (default 10 → 10ms on
- * modern device vs 80ms). For a single-user app this is plenty.
+ * bcryptjs (pure JS) медленный на RN → cost 8. Для single-user ОК.
  */
 
 import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import bcrypt from 'bcryptjs';
 
 const PASSWORD_KEY = 'mirai_rpg.password_hash_v1';
@@ -18,81 +15,66 @@ const SESSION_KEY = 'mirai_rpg.session_active_v1';
 const BCRYPT_COST = 8;
 const TIMEOUT_MS = 3000;
 
-async function withTimeout<T>(p: Promise<T>, label: string): Promise<T> {
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
     p,
     new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`SecureStore timeout: ${label}`)), TIMEOUT_MS),
+      setTimeout(() => reject(new Error('SecureStore timeout: ' + label)), ms),
     ),
   ]);
 }
 
-async function ssGet(key: string): Promise<string | null> {
-  try {
-    return await withTimeout(SecureStore.getItemAsync(key), 'get:' + key);
-  } catch (e) {
-    console.warn('[MiraiRPG] SecureStore.get failed, fallback to AsyncStorage:', e);
-    try { return await AsyncStorage.getItem(key); } catch { return null; }
-  }
-}
-
-async function ssSet(key: string, value: string): Promise<void> {
-  try {
-    await withTimeout(SecureStore.setItemAsync(key, value), 'set:' + key);
-  } catch (e) {
-    console.warn('[MiraiRPG] SecureStore.set failed, fallback to AsyncStorage:', e);
-  }
-  try { await AsyncStorage.setItem(key, value); } catch {}
-}
-
-async function ssDel(key: string): Promise<void> {
-  try { await withTimeout(SecureStore.deleteItemAsync(key), 'del:' + key); } catch (e) {
-    console.warn('[MiraiRPG] SecureStore.del failed:', e);
-  }
-  try { await AsyncStorage.removeItem(key); } catch {}
-}
-
 export class AuthService {
-  /** True if user has already created a password (i.e. registered). */
   async isRegistered(): Promise<boolean> {
-    const v = await ssGet(PASSWORD_KEY);
-    return !!v;
+    try {
+      const v = await withTimeout(SecureStore.getItemAsync(PASSWORD_KEY), TIMEOUT_MS, 'get-password');
+      return !!v;
+    } catch {
+      return false;
+    }
   }
 
-  /** True if currently authenticated in this app run. */
   async isAuthenticated(): Promise<boolean> {
-    const v = await ssGet(SESSION_KEY);
-    return v === '1';
+    try {
+      const v = await withTimeout(SecureStore.getItemAsync(SESSION_KEY), TIMEOUT_MS, 'get-session');
+      return v === '1';
+    } catch {
+      return false;
+    }
   }
 
-  /** First-time setup. Hashes the password and stores it. */
   async register(password: string): Promise<void> {
     if (password.length < 6) {
       throw new Error('Пароль должен быть не короче 6 символов');
     }
     const hash = await bcrypt.hash(password, BCRYPT_COST);
-    await ssSet(PASSWORD_KEY, hash);
-    await ssSet(SESSION_KEY, '1');
+    await withTimeout(SecureStore.setItemAsync(PASSWORD_KEY, hash), TIMEOUT_MS, 'set-password');
+    await withTimeout(SecureStore.setItemAsync(SESSION_KEY, '1'), TIMEOUT_MS, 'set-session');
   }
 
-  /** Verify password and start a session. */
   async signIn(password: string): Promise<boolean> {
-    const stored = await ssGet(PASSWORD_KEY);
-    if (!stored) return false;
-    const ok = await bcrypt.compare(password, stored);
-    if (!ok) return false;
-    await ssSet(SESSION_KEY, '1');
-    return true;
+    try {
+      const stored = await withTimeout(SecureStore.getItemAsync(PASSWORD_KEY), TIMEOUT_MS, 'get-password');
+      if (!stored) return false;
+      const ok = await bcrypt.compare(password, stored);
+      if (!ok) return false;
+      await withTimeout(SecureStore.setItemAsync(SESSION_KEY, '1'), TIMEOUT_MS, 'set-session');
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  /** End the current session. Password remains stored. */
   async signOut(): Promise<void> {
-    await ssDel(SESSION_KEY);
+    try {
+      await withTimeout(SecureStore.deleteItemAsync(SESSION_KEY), TIMEOUT_MS, 'del-session');
+    } catch {
+      // ignore
+    }
   }
 
-  /** Nuke everything. For tests. */
   async _resetForTests(): Promise<void> {
-    await ssDel(PASSWORD_KEY);
-    await ssDel(SESSION_KEY);
+    try { await withTimeout(SecureStore.deleteItemAsync(PASSWORD_KEY), TIMEOUT_MS, 'del-password'); } catch {}
+    try { await withTimeout(SecureStore.deleteItemAsync(SESSION_KEY), TIMEOUT_MS, 'del-session'); } catch {}
   }
 }
