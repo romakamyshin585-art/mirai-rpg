@@ -2,24 +2,30 @@ import { SCHEMA_STATEMENTS, SCHEMA_VERSION } from './schema';
 import { createMemoryDb } from './memory';
 import type { DbExecutor } from './executor';
 
-/** Apply all schema statements in order. Idempotent. */
+/**
+ * Apply all schema statements in order. Idempotent.
+ *
+ * The schema_version row is written using SQL string literals (not bound
+ * parameters) on purpose. expo-sqlite 15.1.4's NativeDatabase.execAsync
+ * silently drops parameter bindings for single-statement INSERT/UPDATE
+ * on Android production builds, which causes:
+ *   "NOT NULL constraint failed: config.value"
+ * because value comes through as NULL when bound via ?. By inlining the
+ * version as a string literal the binding step is skipped entirely and
+ * the value is always present. SCHEMA_VERSION is a compile-time constant
+ * so the literal is safe.
+ */
 export async function migrate(db: DbExecutor): Promise<void> {
+  const versionLiteral = String(SCHEMA_VERSION);
   for (const stmt of SCHEMA_STATEMENTS) {
     await db.exec(stmt);
   }
-  // Track schema version in config table (upsert via read-then-write;
-  // schema_version is set once at fresh install and never bumped for v1).
-  const existing = await db.one<{ value: string }>(
-    `SELECT value FROM config WHERE key = 'schema_version'`,
+  await db.exec(
+    `INSERT OR IGNORE INTO config (key, value) VALUES ('schema_version', '${versionLiteral}')`,
   );
-  if (existing) {
-    await db.exec(`UPDATE config SET value = ? WHERE key = 'schema_version'`, [String(SCHEMA_VERSION)]);
-  } else {
-    await db.exec(
-      `INSERT INTO config (key, value) VALUES (?, ?)`,
-      ['schema_version', String(SCHEMA_VERSION)],
-    );
-  }
+  await db.exec(
+    `UPDATE config SET value = '${versionLiteral}' WHERE key = 'schema_version'`,
+  );
 }
 
 /** Returns the schema version stored in DB, or 0 if never migrated. */

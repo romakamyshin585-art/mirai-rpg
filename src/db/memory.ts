@@ -15,6 +15,25 @@ interface Table {
   rows: Row[];
 }
 
+/**
+ * Convert a SQL literal token (e.g. `'1'`, `'foo'`, `42`, `NULL`) into
+ * its JS value, for the in-memory test fake. Only the shapes the
+ * production code emits are supported.
+ */
+function sqlLiteralToValue(token: string): string | number | null {
+  const t = token.trim();
+  if (t === 'NULL' || t === 'null') return null;
+  if (/^-?\d+$/.test(t)) return Number(t);
+  if (/^-?\d+\.\d+$/.test(t)) return Number(t);
+  // String literal in single quotes; support '' as empty string and
+  // doubled '' as an escaped quote.
+  if (t.startsWith("'") && t.endsWith("'") && t.length >= 2) {
+    return t.slice(1, -1).replace(/''/g, "'");
+  }
+  // Unquoted identifier-looking token: treat as the literal string.
+  return t;
+}
+
 class MemoryDb {
   tables = new Map<string, Table>();
 
@@ -50,15 +69,28 @@ class MemoryDb {
       return { rows: [], changes: 0 };
     }
 
-    if (upper.startsWith('INSERT INTO')) {
-      // INSERT INTO t (cols) VALUES (?, ?, ?)
-      const m = s.match(/INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)\s*;?$/i);
+    if (upper.startsWith('INSERT INTO') || upper.startsWith('INSERT OR IGNORE INTO')) {
+      // INSERT [OR IGNORE] INTO t (cols) VALUES (?, ?, ?) or literal VALUES
+      const m = s.match(/INSERT(?:\s+OR\s+IGNORE)?\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([\s\S]+?)\)\s*;?$/i);
       if (!m) throw new Error('Bad INSERT: ' + sql);
       const tname = m[1];
       const cols = m[2].split(',').map((c) => c.trim());
-      const placeholders = m[3].split(',').map((c) => c.trim());
-      if (cols.length !== placeholders.length || placeholders.length !== params.length) {
-        throw new Error(`INSERT param mismatch: cols=${cols.length} ph=${placeholders.length} params=${params.length}`);
+      // Either placeholders are all '?' and params is non-empty,
+      // or all placeholders are SQL literals and params is empty.
+      const placeholderList = m[3].split(',').map((c) => c.trim());
+      const isLiteral = placeholderList.every((p) => p !== '?');
+      if (isLiteral) {
+        if (cols.length !== placeholderList.length) {
+          throw new Error(`INSERT literal mismatch: cols=${cols.length} vals=${placeholderList.length}`);
+        }
+        const t = this.ensure(tname);
+        const row: Row = {};
+        cols.forEach((c, i) => { row[c] = sqlLiteralToValue(placeholderList[i]); });
+        t.rows.push(row);
+        return { rows: [], changes: 1 };
+      }
+      if (cols.length !== placeholderList.length || placeholderList.length !== params.length) {
+        throw new Error(`INSERT param mismatch: cols=${cols.length} ph=${placeholderList.length} params=${params.length}`);
       }
       const t = this.ensure(tname);
       const row: Row = {};
@@ -90,8 +122,10 @@ class MemoryDb {
             return;
           }
           const eq = s.match(/^(\w+)\s*=\s*\?$/);
-          if (!eq) throw new Error('Bad SET: ' + s);
-          row[eq[1]] = params[i];
+          if (eq) { row[eq[1]] = params[i]; return; }
+          const litEq = s.match(/^(\w+)\s*=\s*('(?:[^']|'')*'|-?\d+(?:\.\d+)?|NULL|null)$/);
+          if (litEq) { row[litEq[1]] = sqlLiteralToValue(litEq[2]); return; }
+          throw new Error('Bad SET: ' + s);
         });
         changed += 1;
       }
@@ -374,9 +408,19 @@ function matchWhere(row: Row, where: string, params: ReadonlyArray<unknown>, ski
   const parts = splitAnd(where);
   let p = skipFirst;
   for (const part of parts) {
-    const m = part.match(/^(\w+)\s*(=|!=|<=|>=|<|>)\s*\?$/);
-    if (!m) throw new Error('Bad WHERE: ' + part);
-    if (!cmp(row[m[1]], m[2], params[p++])) return false;
+    // Either 'col = ?' (bound) or 'col = <literal>' (e.g. 'foo', 42, NULL).
+    const bound = part.match(/^(\w+)\s*(=|!=|<=|>=|<|>)\s*\?$/);
+    if (bound) {
+      if (!cmp(row[bound[1]], bound[2], params[p++])) return false;
+      continue;
+    }
+    const lit = part.match(/^(\w+)\s*(=|!=|<=|>=|<|>)\s*('(?:[^']|'')*'|-?\d+(?:\.\d+)?|NULL|null)$/);
+    if (lit) {
+      const rhs = lit[3] === 'NULL' || lit[3] === 'null' ? null : sqlLiteralToValue(lit[3]);
+      if (!cmp(row[lit[1]], lit[2], rhs)) return false;
+      continue;
+    }
+    throw new Error('Bad WHERE: ' + part);
   }
   return true;
 }
