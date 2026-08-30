@@ -1,6 +1,6 @@
 /**
  * App-level singleton wiring. Owns the DB connection, the single user,
- * and exposes the services. Re-initialises after a sign-out.
+ * and exposes the services.
  *
  * No DI library — the app is small and the lifetime of these services
  * is the app's lifetime.
@@ -16,6 +16,12 @@ import { QuestService } from '../services/quest_service';
 import { ProgressionService } from '../services/progression_service';
 import { AchievementService } from '../services/achievement_service';
 import { UserRepo } from '../repos/user_repo';
+
+const USER_ID_KEY = 'user_id';
+
+function genUserId(): string {
+  return 'u_' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+}
 
 export class AppContext {
   static instance: AppContext | null = null;
@@ -53,29 +59,22 @@ export class AppContext {
     }
   }
 
+  /**
+   * Read the user_id from the config table. If absent, generate a new
+   * one, store it, and ensure the matching user row exists. This avoids
+   * expo-secure-store entirely: the user's identity is just a row in
+   * SQLite, which is the same place everything else already lives.
+   */
   private async _ensureUserId(): Promise<string> {
-    const SecureStore = await import('expo-secure-store');
-    const KEY = 'mirai_rpg.user_id_v1';
-    const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T> =>
-      Promise.race([
-        p,
-        new Promise<T>((_, reject) =>
-          setTimeout(() => reject(new Error('secure-store timeout')), ms),
-        ),
-      ]);
-    let id: string | null = null;
-    try {
-      id = await withTimeout(SecureStore.getItemAsync(KEY), 3000);
-    } catch {
-      // на Android 10 Keystore иногда висит → генерим новый
-    }
+    const row = await this.db.one<{ value: string }>(
+      `SELECT value FROM config WHERE key = '${USER_ID_KEY}'`,
+    );
+    let id = row?.value ?? '';
     if (!id) {
-      id = 'u_' + Math.random().toString(36).slice(2, 12);
-      try {
-        await withTimeout(SecureStore.setItemAsync(KEY, id), 3000);
-      } catch {
-        // даже если не сохранилось — для текущего запуска хватит
-      }
+      id = genUserId();
+      await this.db.exec(
+        `INSERT OR IGNORE INTO config (key, value) VALUES ('${USER_ID_KEY}', '${id}')`,
+      );
     }
     const repo = new UserRepo(this.db);
     const existing = await repo.getById(id);

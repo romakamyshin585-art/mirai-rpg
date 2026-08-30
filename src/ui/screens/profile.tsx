@@ -1,10 +1,10 @@
 /**
- * Profile screen — character + stats + PB + sign out.
+ * Profile screen — character + stats + PB. No sign-out: single-user app.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { View, ScrollView } from 'react-native';
-import { Card, H1, H2, H3, Muted, ProgressBar, Button, Text } from '../components';
+import { Card, H1, H2, H3, Muted, ProgressBar, Text } from '../components';
 import { AppContext } from '../app_context';
 import { COLORS, CATEGORY_COLORS, CATEGORY_LABELS, FONT, SPACING } from '../theme';
 import { CATEGORIES } from '../../domain/category';
@@ -19,7 +19,7 @@ const CLASS_LABEL: Record<string, string> = {
   leader: '👑 Лидер',
 };
 
-export function ProfileScreen({ ctx, onSignOut }: { ctx: AppContext; onSignOut: () => void }) {
+export function ProfileScreen({ ctx }: { ctx: AppContext }) {
   const [char, setChar] = useState<CharacterRow | null>(null);
   const [stats, setStats] = useState<StatRow[]>([]);
   const [pbs, setPbs] = useState<Array<{ scope: string; value: number; achieved_at: string }>>([]);
@@ -86,9 +86,6 @@ export function ProfileScreen({ ctx, onSignOut }: { ctx: AppContext; onSignOut: 
           ))}
         </>
       ) : null}
-
-      <View style={{ height: SPACING.lg }} />
-      <Button title="Выйти из аккаунта" onPress={onSignOut} variant="danger" />
     </ScrollView>
   );
 }

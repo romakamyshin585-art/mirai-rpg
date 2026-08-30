@@ -1,12 +1,11 @@
 /**
- * App root. State-driven navigation: no @react-navigation, just
- * (tab, authState). The app is for one user, four screens.
+ * App root. Single-user: no auth flow, no login screen. After init,
+ * goes straight to the four-tab main UI.
  */
 
 import { useEffect, useState } from 'react';
 import { SafeAreaView, View, Pressable, Text, ActivityIndicator, StatusBar } from 'react-native';
 import { AppContext } from './app_context';
-import { LoginScreen } from './screens/login';
 import { QuestsScreen } from './screens/quests';
 import { ProfileScreen } from './screens/profile';
 import { AchievementsScreen } from './screens/achievements';
@@ -15,11 +14,9 @@ import { Toast } from './toast';
 import { COLORS, FONT, SPACING } from './theme';
 
 type Tab = 'quests' | 'calendar' | 'profile' | 'achievements';
-type AuthState = 'loading' | 'authed' | 'guest';
 
 export default function App() {
   const [ctx, setCtx] = useState<AppContext | null>(null);
-  const [auth, setAuth] = useState<AuthState>('loading');
   const [tab, setTab] = useState<Tab>('quests');
   const [toast, setToast] = useState<string | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
@@ -31,14 +28,6 @@ export default function App() {
         const c = await AppContext.init();
         if (cancelled) return;
         setCtx(c);
-        const isAuthed = await c.auth.isAuthenticated();
-        const isRegistered = await c.auth.isRegistered();
-        if (cancelled) return;
-        if (!isRegistered) {
-          setAuth('guest');
-        } else {
-          setAuth(isAuthed ? 'authed' : 'guest');
-        }
       } catch (e: any) {
         if (!cancelled) setInitError(e?.message || String(e));
       }
@@ -55,20 +44,11 @@ export default function App() {
     );
   }
 
-  if (!ctx || auth === 'loading') {
+  if (!ctx) {
     return (
       <View style={{ flex: 1, backgroundColor: COLORS.bg, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator color={COLORS.accent} size="large" />
       </View>
-    );
-  }
-
-  if (auth === 'guest') {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
-        <StatusBar barStyle="light-content" backgroundColor={COLORS.bg} />
-        <LoginScreen ctx={ctx} onAuthenticated={() => setAuth('authed')} />
-      </SafeAreaView>
     );
   }
 
@@ -83,10 +63,7 @@ export default function App() {
         ) : tab === 'calendar' ? (
           <CalendarScreen ctx={ctx} />
         ) : tab === 'profile' ? (
-          <ProfileScreen ctx={ctx} onSignOut={async () => {
-            await ctx.auth.signOut();
-            setAuth('guest');
-          }} />
+          <ProfileScreen ctx={ctx} />
         ) : (
           <AchievementsScreen ctx={ctx} />
         )}
