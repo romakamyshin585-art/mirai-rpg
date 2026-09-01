@@ -9,3 +9,12 @@ android/local.properties
 *.log
 .DS_Store
 ios/
+.agents/
+tools/
+.scratch-Documents-MiraiRPG-backup/
+skills-lock.json
+test-android.js
+firebase-debug.log
+.firebase/
+crash-screenshot.jpg
+mirai-rpg-build-*.apk

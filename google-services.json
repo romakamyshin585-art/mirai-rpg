@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "19503511084",
+    "project_id": "mirai-rpg",
+    "storage_bucket": "mirai-rpg.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:19503511084:android:87f6cd3e7e1ca4c4890389",
+        "android_client_info": {
+          "package_name": "com.mirai.rpg"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCPCR8hwBRuvHR20v_WnsGDLg0wR58gHbg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
