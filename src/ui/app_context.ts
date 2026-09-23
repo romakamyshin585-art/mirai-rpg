@@ -7,7 +7,7 @@
  */
 
 import type { DbExecutor } from '../db/executor';
-import { migrate, freshMemoryDb } from '../db';
+import { migrate } from '../db';
 import { seedIfEmpty } from '../seed';
 import { getExecutor } from '../db/sqlite';
 import { AuthService } from '../services/auth_service';
@@ -25,6 +25,7 @@ function genUserId(): string {
 
 export class AppContext {
   static instance: AppContext | null = null;
+  static initPromise: Promise<AppContext> | null = null;
 
   db!: DbExecutor;
   auth!: AuthService;
@@ -35,45 +36,74 @@ export class AppContext {
   userId!: string;
 
   static async init(): Promise<AppContext> {
+    // Return existing instance if already initialized
     if (AppContext.instance) return AppContext.instance;
-    const ctx = new AppContext();
-    ctx.db = await ctx._openDb();
-    await migrate(ctx.db);
-    await seedIfEmpty(ctx.db);
-    ctx.auth = new AuthService();
-    ctx.character = new CharacterService(ctx.db);
-    ctx.quest = new QuestService(ctx.db);
-    ctx.progression = new ProgressionService(ctx.db);
-    ctx.achievement = new AchievementService(ctx.db);
-    ctx.userId = await ctx._ensureUserId();
-    void ctx.character.getOrCreate(ctx.userId, 'Hero').catch(() => {});
-    AppContext.instance = ctx;
-    return ctx;
+
+    // If initialization is in progress, await the same promise (single-flight)
+    if (AppContext.initPromise) {
+      console.log('[MiraiRPG] AppContext.init: awaiting in-progress initialization');
+      return AppContext.initPromise;
+    }
+
+    // Start new initialization
+    AppContext.initPromise = (async () => {
+      const ctx = new AppContext();
+      console.log('[MiraiRPG] AppContext.init: opening database');
+      ctx.db = await ctx._openDb();
+      console.log('[MiraiRPG] AppContext.init: running migrations');
+      await migrate(ctx.db);
+      console.log('[MiraiRPG] AppContext.init: seeding database');
+      await seedIfEmpty(ctx.db);
+      console.log('[MiraiRPG] AppContext.init: creating services');
+      ctx.auth = new AuthService();
+      ctx.character = new CharacterService(ctx.db);
+      ctx.quest = new QuestService(ctx.db);
+      ctx.progression = new ProgressionService(ctx.db);
+      ctx.achievement = new AchievementService(ctx.db);
+      console.log('[MiraiRPG] AppContext.init: ensuring user ID');
+      ctx.userId = await ctx._ensureUserId();
+      console.log('[MiraiRPG] AppContext.init: getting/creating character');
+      await ctx.character.getOrCreate(ctx.userId, 'Hero');
+      AppContext.instance = ctx;
+      console.log('[MiraiRPG] AppContext.init: complete');
+      return ctx;
+    })();
+
+    try {
+      return await AppContext.initPromise;
+    } catch (e) {
+      // On failure, reset the promise so retry can start fresh
+      AppContext.initPromise = null;
+      throw e;
+    }
+  }
+
+  static resetInstance(): void {
+    AppContext.instance = null;
+    AppContext.initPromise = null;
   }
 
   private async _openDb(): Promise<DbExecutor> {
-    try {
-      return await getExecutor();
-    } catch {
-      return freshMemoryDb();
-    }
+    return await getExecutor();
   }
 
   /**
    * Read the user_id from the config table. If absent, generate a new
    * one, store it, and ensure the matching user row exists. This avoids
    * expo-secure-store entirely: the user's identity is just a row in
-   * SQLite, which is the same place everything else already lives.
+   * SQLite, which is the same place everything already lives.
    */
   private async _ensureUserId(): Promise<string> {
     const row = await this.db.one<{ value: string }>(
-      `SELECT value FROM config WHERE key = '${USER_ID_KEY}'`,
+      `SELECT value FROM config WHERE key = ?`,
+      [USER_ID_KEY],
     );
     let id = row?.value ?? '';
     if (!id) {
       id = genUserId();
       await this.db.exec(
-        `INSERT OR IGNORE INTO config (key, value) VALUES ('${USER_ID_KEY}', '${id}')`,
+        `INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)`,
+        [USER_ID_KEY, id],
       );
     }
     const repo = new UserRepo(this.db);
@@ -83,7 +113,4 @@ export class AppContext {
   }
 }
 
-export async function getAppContext(): Promise<AppContext> {
-  if (AppContext.instance) return AppContext.instance;
-  return AppContext.init();
-}
+

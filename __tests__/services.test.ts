@@ -229,7 +229,7 @@ describe('AchievementService', () => {
     await cRepo.insert({ quest_id: q.id, user_id: user.id, category: 'health', xp_awarded: 20, dr_multiplier: 1.0 });
     const aSvc = new AchievementService(db);
     await aSvc.checkAfterCompletion(user.id, {
-      completionAt: new Date('2026-08-28T15:00:00'),
+      completionAt: new Date(),
       category: 'health', questId: q.id, difficulty: 1, xpAwarded: 20,
     });
     const pbs = await aSvc.listPersonalBests(user.id);

@@ -48,11 +48,19 @@ export class AchievementRepo {
       created_at: nowIso(),
       icon: row.icon || '🏆',
     };
+    // INSERT OR IGNORE: UNIQUE constraint violations are silently ignored
+    // Any other SQLite error (corruption, disk full, schema mismatch, etc.) propagates
     await this.db.exec(
-      `INSERT INTO achievement (id, code, name, description, rarity, icon, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO achievement (id, code, name, description, rarity, icon, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [r.id, r.code, r.name, r.description, r.rarity, r.icon, r.created_at],
     );
-    return r;
+    // Verify insert succeeded by selecting back
+    const inserted = await this.getByCode(r.code);
+    if (!inserted) {
+      // This should not happen with INSERT OR IGNORE unless DB is corrupted/readonly
+      throw new Error(`Achievement insertDef failed: code=${r.code} not found after insert`);
+    }
+    return inserted;
   }
 
   async listUnlocks(userId: string): Promise<AchievementUnlockRow[]> {

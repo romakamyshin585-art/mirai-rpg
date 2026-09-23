@@ -314,14 +314,17 @@ function applyWhere<T extends Row>(rows: T[], where: string, params: ReadonlyArr
     // detect if this is an OR-part by re-checking original text
     const isOr = /\s+OR\s+/i.test(stripped);
     if (isOr) {
-      // group the OR sub-parts; the simplest correct thing is to evaluate
-      // the whole OR-expression as a positive match using the same primitives.
+      // group the OR sub-parts; each branch gets its own param offset.
       const orParts = stripped.split(/\s+OR\s+/i);
-      const matchers = orParts.map((op) => buildMatcher(op, params, p));
+      let q = p;
+      const matchers = orParts.map((op) => {
+        const m = buildMatcher(op, params, q);
+        q += countParamsIn([op]);
+        return m;
+      });
       const orMatcher = (r: Row) => matchers.some((m) => m(r));
-      tokens.push({ op: 'OR', match: orMatcher, consumed: orParts.length });
-      // consumed params across orParts
-      p += countParamsIn(orParts);
+      tokens.push({ op: 'OR', match: orMatcher, consumed: q - p });
+      p = q;
       continue;
     }
     const matcher = buildMatcher(stripped, params, p);
@@ -396,10 +399,33 @@ function cmp(a: unknown, op: string, b: unknown): boolean {
   switch (op) {
     case '=': return a === b || (a == null && b == null);
     case '!=': return a !== b;
-    case '<': return Number(a) < Number(b);
-    case '>': return Number(a) > Number(b);
-    case '<=': return Number(a) <= Number(b);
-    case '>=': return Number(a) >= Number(b);
+    case '<':
+    case '>':
+    case '<=':
+    case '>=': {
+      // ISO date strings (e.g. completed_at) must compare lexicographically like SQLite.
+      // Number("2026-...") is NaN, so fall back to string comparison when both sides are strings.
+      if (typeof a === 'string' && typeof b === 'string') {
+        if (op === '<') return a < b;
+        if (op === '>') return a > b;
+        if (op === '<=') return a <= b;
+        return a >= b;
+      }
+      const na = Number(a);
+      const nb = Number(b);
+      if (Number.isNaN(na) || Number.isNaN(nb)) {
+        const sa = String(a);
+        const sb = String(b);
+        if (op === '<') return sa < sb;
+        if (op === '>') return sa > sb;
+        if (op === '<=') return sa <= sb;
+        return sa >= sb;
+      }
+      if (op === '<') return na < nb;
+      if (op === '>') return na > nb;
+      if (op === '<=') return na <= nb;
+      return na >= nb;
+    }
     default: return false;
   }
 }

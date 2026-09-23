@@ -2,6 +2,63 @@ import React from 'react';
 import { View, Text as RNText, Pressable, StyleSheet, ViewStyle, TextStyle, StyleProp } from 'react-native';
 import { COLORS, FONT, RADIUS, SPACING } from './theme';
 
+// Lucide Icons - lazy loaded
+const LucideIcons: Record<string, React.ComponentType<any>> = {};
+function getLucideIcon(name: string) {
+  if (!LucideIcons[name]) {
+    try {
+      const module = require('lucide-react-native');
+      LucideIcons[name] = module[name];
+    } catch {
+      LucideIcons[name] = () => <View style={{ width: 24, height: 24 }} />;
+    }
+  }
+  return LucideIcons[name];
+}
+
+export function LucideIcon({ name, size = 24, color, strokeWidth = 2, style }: {
+  name: string;
+  size?: number;
+  color?: string;
+  strokeWidth?: number;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const Icon = getLucideIcon(name);
+  return <Icon size={size} color={color} strokeWidth={strokeWidth} style={style} />;
+}
+
+export function Row({ children, gap = 0, style, ...props }: {
+  children: React.ReactNode;
+  gap?: number;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <View style={[{ flexDirection: 'row', alignItems: 'center', gap }, style]} {...props}>
+      {children}
+    </View>
+  );
+}
+
+export function Column({ children, gap = 0, style, ...props }: {
+  children: React.ReactNode;
+  gap?: number;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <View style={[{ flexDirection: 'column', gap }, style]} {...props}>
+      {children}
+    </View>
+  );
+}
+
+export function Badge({ label, color, style }: { label: string; color: string; style?: StyleProp<ViewStyle> }) {
+  return (
+    <View style={[{ paddingVertical: 2, paddingHorizontal: SPACING.sm, borderRadius: RADIUS.pill, backgroundColor: color + '20', borderWidth: 1, borderColor: color }, style]}>
+      <RNText style={{ color, fontSize: FONT.tiny, fontWeight: '600' }}>{label}</RNText>
+    </View>
+  );
+}
+
 export function ScreenContainer({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
   return <View style={[styles.screen, style]}>{children}</View>;
 }
@@ -96,17 +153,20 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: COLORS.card,
     borderRadius: RADIUS.lg,
+    borderCurve: 'continuous',
     padding: SPACING.lg,
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   cardElevated: {
     backgroundColor: COLORS.cardElevated,
+    borderCurve: 'continuous',
   },
   button: {
     paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.xl,
     borderRadius: RADIUS.md,
+    borderCurve: 'continuous',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -114,16 +174,19 @@ const styles = StyleSheet.create({
     height: 8,
     backgroundColor: COLORS.border,
     borderRadius: RADIUS.pill,
+    borderCurve: 'continuous',
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
     borderRadius: RADIUS.pill,
+    borderCurve: 'continuous',
   },
   pill: {
     paddingVertical: 4,
     paddingHorizontal: SPACING.sm,
     borderRadius: RADIUS.pill,
+    borderCurve: 'continuous',
     borderWidth: 1,
     alignSelf: 'flex-start',
   },
