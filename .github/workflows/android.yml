@@ -46,3 +46,33 @@ jobs:
           name: mirai-rpg-preview-apk
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+      - name: Run Android emulator smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb install -r android/app/build/outputs/apk/release/app-release.apk
+            adb logcat -c
+            adb shell am force-stop com.mirai.rpg
+            adb shell monkey -p com.mirai.rpg 1
+            sleep 20
+            adb logcat -d -v time > emulator-logcat.txt || true
+            adb exec-out screencap -p > emulator-screen.png
+            echo "--- app pid ---"
+            adb shell pidof com.mirai.rpg || true
+            echo "--- focused window ---"
+            adb shell dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' || true
+
+      - name: Upload emulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-diagnostics
+          path: |
+            emulator-logcat.txt
+            emulator-screen.png
+          if-no-files-found: warn
