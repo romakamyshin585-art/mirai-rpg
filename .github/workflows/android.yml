@@ -62,10 +62,12 @@ jobs:
             adb install -r android/app/build/outputs/apk/release/app-release.apk
             adb logcat -c
             adb shell am force-stop com.mirai.rpg
-            adb shell monkey -p com.mirai.rpg 1
-            sleep 20
+            adb shell am start -W -n com.mirai.rpg/.MainActivity > emulator-start.txt
+            sleep 3
+            adb exec-out screencap -p > emulator-screen-after-start.png
+            sleep 12
+            adb exec-out screencap -p > emulator-screen-after-15s.png
             adb logcat -d -v time > emulator-logcat.txt || true
-            adb exec-out screencap -p > emulator-screen.png
             echo "--- app pid ---"
             adb shell pidof com.mirai.rpg || true
             echo "--- focused window ---"
@@ -78,5 +80,7 @@ jobs:
           name: android-emulator-diagnostics
           path: |
             emulator-logcat.txt
-            emulator-screen.png
+            emulator-start.txt
+            emulator-screen-after-start.png
+            emulator-screen-after-15s.png
           if-no-files-found: warn
