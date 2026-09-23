@@ -31,7 +31,12 @@ function AppContent() {
   const [retryCount, setRetryCount] = useState(0);
   const { colors } = useTheme();
   const [fontsLoaded, fontError] = useNunitoFonts();
+  const [fontsReady, setFontsReady] = useState(false);
   const fontTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) setFontsReady(true);
+  }, [fontsLoaded, fontError]);
 
   const handleInitError = useCallback((error: Error, stage: string) => {
     const msg = `${stage}: ${error?.message || String(error)}`;
@@ -43,10 +48,11 @@ function AppContent() {
   useEffect(() => {
     // Font loading timeout fallback (10 seconds)
     fontTimeoutRef.current = setTimeout(() => {
-      if (!fontsLoaded) {
-        console.warn('[MiraiRPG] Font loading timeout, proceeding anyway');
+  if (!fontsReady) {
+        console.warn('[MiraiRPG] Font loading timeout, proceeding with fallback');
+        setFontsReady(true);
       }
-    }, 10000);
+    }, 8000);
 
     let cancelled = false;
     (async () => {
@@ -75,7 +81,7 @@ function AppContent() {
       <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
         <ActivityIndicator color={colors.accent} size="large" />
         <Text style={{ color: colors.textMuted, marginTop: 16, fontSize: 13, textAlign: 'center' }}>
-          Загрузка шрифтов...{fontError ? `\n${fontError.message}` : ''}
+          Загрузка шрифтов...{fontError ? `\n${fontError instanceof Error ? fontError.message : String(fontError)}` : ''}
         </Text>
       </View>
     );
