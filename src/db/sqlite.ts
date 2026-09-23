@@ -23,10 +23,8 @@ type SqliteDb = {
   runAsync: (sql: string, params?: ReadonlyArray<unknown>) => Promise<unknown>;
   getFirstAsync: <T extends Row>(sql: string, params?: ReadonlyArray<unknown>) => Promise<T | null>;
   getAllAsync: <T extends Row>(sql: string, params?: ReadonlyArray<unknown>) => Promise<T[]>;
-  withTransactionAsync: (fn: (tx: TransactionLike) => Promise<void>) => Promise<void>;
+  withTransactionAsync: (fn: () => Promise<void>) => Promise<void>;
 };
-
-type TransactionLike = SqliteDb;
 
 let cached: SqliteDb | null = null;
 let logCounter = 0;
@@ -93,9 +91,8 @@ function wrap(db: SqliteDb): DbExecutor {
     },
     withTransaction: async (fn) => {
       let result: unknown;
-      await db.withTransactionAsync(async (tx) => {
-        const wrapped = wrap(tx as SqliteDb);
-        result = await fn(wrapped);
+      await db.withTransactionAsync(async () => {
+        result = await fn(wrap(db));
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return result as any;
