@@ -417,7 +417,7 @@ export function RadarChart({
             
             {CATEGORIES.map((_, i) => {
               const outerPoint = AXIS_END_POINTS[i];
-              const lineStyle = axisLineAnims[i];
+              const lineStyle = axisLineAnims[i] ?? {};
               return (
                 <AnimatedLine
                   key={'axis-' + i}
@@ -426,8 +426,8 @@ export function RadarChart({
                   x2={outerPoint.x}
                   y2={outerPoint.y}
                   stroke={colors.catHealth}
-                  opacity={lineStyle.opacity}
-                  strokeWidth={lineStyle.strokeWidth}
+                  opacity={lineStyle.opacity ?? 1}
+                  strokeWidth={lineStyle.strokeWidth ?? 1}
                 />
               );
             })}
@@ -462,8 +462,8 @@ export function RadarChart({
                 fill={colors['cat' + cat.charAt(0).toUpperCase() + cat.slice(1) as keyof typeof colors] || colors.accent}
                 stroke={colors.bg}
                 strokeWidth={2}
-                transform={vertexAnimStyles[i].transform}
-                opacity={vertexAnimStyles[i].opacity}
+                transform={vertexAnimStyles[i]?.transform ?? []}
+                opacity={vertexAnimStyles[i]?.opacity ?? 1}
               />
             </TouchableOpacity>
           ))}
@@ -471,16 +471,16 @@ export function RadarChart({
           <G>
             {CATEGORIES.map((cat, i) => {
               const point = LABEL_POINTS[i];
-              const labelAnim = axisLabelAnims[i];
+               const labelAnim = axisLabelAnims[i] ?? {};
               return (
                 <AnimatedSvgText
                   key={'label-' + i}
                   transform={[
                     { translateX: point.x - CENTER },
                     { translateY: point.y - CENTER },
-                    ...labelAnim.transform,
+                     ...(labelAnim.transform ?? []),
                   ]}
-                  opacity={labelAnim.opacity}
+                   opacity={labelAnim.opacity ?? 1}
                   textAnchor="middle"
                   fill={colors.textSecondary}
                   fontSize={caption.fontSize}
