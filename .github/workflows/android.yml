@@ -64,8 +64,8 @@ jobs:
             adb logcat -c
             adb shell am force-stop com.mirai.rpg
             adb shell am start -n com.mirai.rpg/.MainActivity || true
-            sleep 18
-            adb exec-out screencap -p > emulator-screen-after-18s.png || true
+            sleep 45
+            adb exec-out screencap -p > emulator-screen-after-45s.png || true
             adb logcat -d -v time > emulator-logcat.txt || true
             echo "--- app pid ---"
             adb shell pidof com.mirai.rpg || true
@@ -79,5 +79,5 @@ jobs:
           name: android-emulator-diagnostics
           path: |
             emulator-logcat.txt
-            emulator-screen-after-18s.png
+            emulator-screen-after-45s.png
           if-no-files-found: warn
