@@ -18,6 +18,7 @@
 
 import { useColorScheme } from 'react-native';
 import { createContext, useContext, useMemo } from 'react';
+import { duration, spring } from './motion/tokens';
 
 // ============================================================
 // NEW DESIGN SYSTEM (internal constants)
@@ -245,22 +246,21 @@ const _NEW_TYPOGRAPHY = {
   },
 } as const;
 
-// --- Motion ---
 const _NEW_MOTION = {
   durations: {
-    fast: 150,
-    normal: 250,
-    slow: 400,
+    fast: duration.micro,
+    normal: duration.standard,
+    slow: duration.major,
   },
   springs: {
-    gentle: { damping: 22, stiffness: 180 },
-    snappy: { damping: 20, stiffness: 250 },
-    bouncy: { damping: 15, stiffness: 200 },
+    gentle: spring.card,
+    snappy: spring.navigation,
+    bouncy: spring.celebration,
   },
   reduced: {
-    fast: 80,
-    normal: 100,
-    slow: 150,
+    fast: duration.reducedMotion,
+    normal: duration.reducedMotion,
+    slow: duration.reducedMotion,
   },
 } as const;
 

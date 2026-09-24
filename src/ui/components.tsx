@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text as RNText, Pressable, StyleSheet, ViewStyle, TextStyle, StyleProp } from 'react-native';
+import { View, Text as RNText, StyleSheet, ViewStyle, TextStyle, StyleProp } from 'react-native';
 import { COLORS, FONT, RADIUS, SPACING } from './theme';
+import { MotionPressable } from './components/MotionPressable';
 
 // Lucide Icons - lazy loaded
 const LucideIcons: Record<string, React.ComponentType<any>> = {};
@@ -112,17 +113,17 @@ export function Button({ title, onPress, disabled, variant = 'primary' }: {
     variant === 'danger'  ? { bg: COLORS.danger, fg: '#FFFFFF' } :
                              { bg: 'transparent', fg: COLORS.text };
   return (
-    <Pressable
+    <MotionPressable
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [
+      style={[
         styles.button,
-        { backgroundColor: palette.bg, opacity: disabled ? 0.4 : pressed ? 0.8 : 1 },
-        variant === 'ghost' && { borderWidth: 1, borderColor: COLORS.border },
+        { backgroundColor: palette.bg, opacity: disabled ? 0.4 : 1 },
+        variant === 'ghost' ? { borderWidth: 1, borderColor: COLORS.border } : null,
       ]}
     >
       <RNText style={{ color: palette.fg, fontWeight: '600', fontSize: FONT.body }}>{title}</RNText>
-    </Pressable>
+    </MotionPressable>
   );
 }
 
@@ -142,7 +143,7 @@ export function Pill({ label, color, onPress }: { label: string; color: string; 
     </View>
   );
   if (onPress) {
-    return <Pressable onPress={onPress}>{inner}</Pressable>;
+    return <MotionPressable onPress={onPress}>{inner}</MotionPressable>;
   }
   return inner;
 }

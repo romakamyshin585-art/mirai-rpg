@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, { Easing, Extrapolate, interpolate, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
 import type { AchievementDefRow, Rarity } from '../../repos/achievement_repo';
 import type { UnlockedAchievement } from '../../services/achievement_service';
 import { BOTTOM_NAV_BASE_HEIGHT, RARITY_COLORS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
+import { Overlay } from '../components/Overlay';
+import { MotionPressable } from '../components/MotionPressable';
+import { MotionProgressBar } from '../components/MotionProgressBar';
+import { duration, spring, useReducedMotion, useScrollHeader } from '../motion';
 
 type Filter = 'all' | 'unlocked' | 'locked';
 
@@ -44,11 +49,13 @@ const RARITY_LABELS: Record<Rarity, string> = {
 type AchievementsScreenProps = {
   ctx: AppContext;
   revision: number;
+  celebrationCodes?: string[];
 };
 
-export function AchievementsScreen({ ctx, revision }: AchievementsScreenProps) {
+export function AchievementsScreen({ ctx, revision, celebrationCodes }: AchievementsScreenProps) {
   const { colors, typographyStylesheet: typography } = useTheme();
   const insets = useSafeAreaInsets();
+  const { onScroll: onHeaderScroll, style: headerStyle } = useScrollHeader();
   const [catalog, setCatalog] = useState<AchievementDefRow[]>([]);
   const [unlocked, setUnlocked] = useState<UnlockedAchievement[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
@@ -56,11 +63,21 @@ export function AchievementsScreen({ ctx, revision }: AchievementsScreenProps) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [unlockedCelebrationCodes, setUnlockedCelebrationCodes] = useState<string[]>([]);
+  const hasLoaded = useRef(false);
+
+  useEffect(() => {
+    setUnlockedCelebrationCodes(celebrationCodes ?? []);
+  }, [celebrationCodes]);
 
   const reload = useCallback(async () => {
     setError(null);
     try {
-      await ctx.achievement.syncFromHistory(ctx.userId);
+      const newlyUnlocked = await ctx.achievement.syncFromHistory(ctx.userId);
+      if (hasLoaded.current && newlyUnlocked.length > 0) {
+        setUnlockedCelebrationCodes(current => [...new Set([...current, ...newlyUnlocked.map(item => item.code)])]);
+      }
+      hasLoaded.current = true;
       const [catalogRows, unlockedRows] = await Promise.all([
         ctx.achievement.listCatalog(),
         ctx.achievement.listUnlocked(ctx.userId),
@@ -113,13 +130,13 @@ export function AchievementsScreen({ ctx, revision }: AchievementsScreenProps) {
         <LucideIcon name="cloud-off" size={38} color={colors.danger} />
         <Text style={[styles.errorTitle, { color: colors.text }]}>Достижения не загрузились</Text>
         <Text style={[styles.errorText, { color: colors.textMuted }]}>{error}</Text>
-        <Pressable
+        <MotionPressable
           accessibilityRole="button"
           onPress={() => void reload()}
-          style={({ pressed }) => [styles.retry, { backgroundColor: colors.accent, opacity: pressed ? 0.8 : 1 }]}
+          style={[styles.retry, { backgroundColor: colors.accent }]}
         >
           <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Повторить</Text>
-        </Pressable>
+        </MotionPressable>
       </View>
     );
   }
@@ -128,7 +145,9 @@ export function AchievementsScreen({ ctx, revision }: AchievementsScreenProps) {
 
   return (
     <>
-      <ScrollView
+      <Animated.ScrollView
+        onScroll={onHeaderScroll}
+        scrollEventThrottle={16}
         style={[styles.scroll, { backgroundColor: colors.bg }]}
         contentContainerStyle={[
           styles.content,
@@ -145,25 +164,32 @@ export function AchievementsScreen({ ctx, revision }: AchievementsScreenProps) {
           />
         }
       >
-        <View style={styles.heading}>
-          <View>
-            <Text style={[styles.title, typography.title, { color: colors.text }]}>Достижения</Text>
-            <Text style={[styles.subtitle, typography.caption, { color: colors.textMuted }]}>Награды за твой прогресс</Text>
+        <Animated.View style={headerStyle}>
+          <View style={styles.heading}>
+            <View>
+              <Text style={[styles.title, typography.title, { color: colors.text }]}>Достижения</Text>
+              <Text style={[styles.subtitle, typography.caption, { color: colors.textMuted }]}>Награды за твой прогресс</Text>
+            </View>
+            <View style={[styles.progressBadge, { backgroundColor: colors.accentSoft }]}>
+              <Text style={[styles.progressValue, typography.numeric, { color: colors.accent }]}>{progress}%</Text>
+              <Text style={[styles.progressLabel, typography.caption, { color: colors.textMuted }]}>открыто</Text>
+            </View>
           </View>
-          <View style={[styles.progressBadge, { backgroundColor: colors.accentSoft }]}>
-            <Text style={[styles.progressValue, typography.numeric, { color: colors.accent }]}>{progress}%</Text>
-            <Text style={[styles.progressLabel, typography.caption, { color: colors.textMuted }]}>открыто</Text>
-          </View>
-        </View>
+        </Animated.View>
 
         <View style={[styles.summary, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
           <View style={styles.summaryCopy}>
             <Text style={[typography.bodyStrong, { color: colors.text }]}>{unlocked.length} из {catalog.length}</Text>
             <Text style={[typography.caption, { color: colors.textMuted }]}>наград получено</Text>
           </View>
-          <View style={[styles.summaryTrack, { backgroundColor: colors.surfaceFloating }]}>
-            <View style={[styles.summaryFill, { width: `${progress}%`, backgroundColor: colors.accent }]} />
-          </View>
+          <MotionProgressBar
+            value={progress / 100}
+            trackColor={colors.surfaceFloating}
+            fillColor={colors.accent}
+            height={6}
+            style={styles.summaryTrack}
+            accessibilityLabel="Прогресс достижений"
+          />
         </View>
 
         <View style={styles.filters}>
@@ -174,101 +200,131 @@ export function AchievementsScreen({ ctx, revision }: AchievementsScreenProps) {
 
         <View style={styles.grid}>
           {visible.map(item => (
-            <AchievementCard key={item.code} item={item} onPress={() => setSelected(item)} />
+            <AchievementCard
+              key={item.code}
+              item={item}
+              celebrating={unlockedCelebrationCodes.includes(item.code)}
+              onPress={() => setSelected(item)}
+            />
           ))}
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
       <AchievementDetails item={selected} onClose={() => setSelected(null)} />
     </>
   );
 }
 
-function AchievementCard({ item, onPress }: { item: AchievementItem; onPress: () => void }) {
+function AchievementCard({ item, celebrating, onPress }: { item: AchievementItem; celebrating: boolean; onPress: () => void }) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
+  const reduced = useReducedMotion();
   const rarityColor = RARITY_COLORS[item.rarity] ?? colors.textMuted;
+  const reveal = useSharedValue(item.isUnlocked ? 1 : 0.92);
+  const celebrationProgress = useSharedValue(1);
+  const glow = useSharedValue(0);
+
+  useEffect(() => {
+    reveal.value = item.isUnlocked
+      ? reduced
+        ? withTiming(1, { duration: duration.reducedMotion })
+        : withSpring(1, spring.card)
+      : withTiming(0.92, { duration: duration.standard });
+    if (!celebrating || !item.isUnlocked) return;
+    celebrationProgress.value = reduced
+      ? withTiming(1, { duration: duration.reducedMotion })
+      : withSequence(
+          withTiming(1.12, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
+          withSpring(1, spring.celebration),
+        );
+    glow.value = reduced
+      ? withDelay(60, withSequence(withTiming(1, { duration: duration.reducedMotion }), withDelay(220, withTiming(0, { duration: duration.reducedMotion }))))
+      : withDelay(60, withSequence(withTiming(1, { duration: duration.micro }), withDelay(220, withTiming(0, { duration: duration.standard, easing: Easing.out(Easing.cubic) }))));
+  }, [celebrating, celebrationProgress, glow, item.isUnlocked, reduced, reveal]);
+
+  const shellStyle = useAnimatedStyle(() => ({
+    opacity: reveal.value,
+    transform: reduced ? [] : [{ scale: interpolate(celebrationProgress.value, [0.8, 1, 1.12], [0.98, 1, 1.04], Extrapolate.CLAMP) }],
+  }));
+  const iconStyle = useAnimatedStyle(() => ({
+    transform: reduced ? [] : [{ scale: celebrationProgress.value }, { rotate: `${interpolate(celebrationProgress.value, [0.8, 1, 1.12], [-3, 0, 3], Extrapolate.CLAMP)}deg` }],
+  }));
+  const glowStyle = useAnimatedStyle(() => ({ opacity: glow.value }));
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${item.name}, ${item.isUnlocked ? 'открыто' : 'закрыто'}`}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.card,
-        {
-          backgroundColor: item.isUnlocked ? colors.surface : colors.surfaceElevated,
-          borderColor: item.isUnlocked ? `${rarityColor}88` : colors.borderSubtle,
-          borderRadius: radius.lg,
-          opacity: pressed ? 0.82 : 1,
-          transform: [{ scale: pressed ? 0.98 : 1 }],
-        },
-      ]}
-    >
-      <View style={styles.cardTop}>
-        <View
-          style={[
-            styles.iconWrap,
-            {
-              backgroundColor: item.isUnlocked ? `${rarityColor}22` : colors.surfaceFloating,
-              borderColor: item.isUnlocked ? `${rarityColor}66` : colors.border,
-              borderRadius: radius.md,
-            },
-          ]}
-        >
-          <LucideIcon name={item.isUnlocked ? ICONS[item.code] ?? 'award' : 'lock'} size={27} color={item.isUnlocked ? rarityColor : colors.textMuted} />
+    <Animated.View style={[styles.cardShell, shellStyle]}>
+      <MotionPressable
+        accessibilityRole="button"
+        accessibilityLabel={`${item.name}, ${item.isUnlocked ? 'открыто' : 'закрыто'}`}
+        onPress={onPress}
+        style={[
+          styles.card,
+          {
+            backgroundColor: item.isUnlocked ? colors.surface : colors.surfaceElevated,
+            borderColor: item.isUnlocked ? `${rarityColor}88` : colors.borderSubtle,
+            borderRadius: radius.lg,
+          },
+        ]}
+      >
+        <Animated.View pointerEvents="none" style={[styles.cardGlow, { backgroundColor: rarityColor }, glowStyle]} />
+        <View style={styles.cardTop}>
+          <Animated.View style={[styles.iconWrap, iconStyle, { backgroundColor: item.isUnlocked ? `${rarityColor}22` : colors.surfaceFloating, borderColor: item.isUnlocked ? `${rarityColor}66` : colors.border, borderRadius: radius.md }]}>
+            <LucideIcon name={item.isUnlocked ? ICONS[item.code] ?? 'award' : 'lock'} size={27} color={item.isUnlocked ? rarityColor : colors.textMuted} />
+          </Animated.View>
+          {item.isUnlocked ? (
+            <View style={[styles.check, { backgroundColor: colors.success }]}>
+              <LucideIcon name="check" size={13} color={colors.bg} strokeWidth={3} />
+            </View>
+          ) : null}
         </View>
-        {item.isUnlocked ? (
-          <View style={[styles.check, { backgroundColor: colors.success }]}>
-            <LucideIcon name="check" size={13} color={colors.bg} strokeWidth={3} />
-          </View>
-        ) : null}
-      </View>
-      <View style={styles.cardCopy}>
-        <Text numberOfLines={2} style={[styles.cardTitle, typography.bodyStrong, { color: item.isUnlocked ? colors.text : colors.textSecondary }]}>
-          {item.name}
-        </Text>
-        <Text numberOfLines={3} style={[styles.cardDescription, typography.caption, { color: colors.textMuted }]}>{item.description}</Text>
-      </View>
-      <View style={[styles.rarity, { backgroundColor: `${rarityColor}18` }]}>
-        <Text style={[typography.caption, { color: rarityColor, fontWeight: '800' }]}>{RARITY_LABELS[item.rarity]}</Text>
-      </View>
-    </Pressable>
+        <View style={styles.cardCopy}>
+          <Text numberOfLines={2} style={[styles.cardTitle, typography.bodyStrong, { color: item.isUnlocked ? colors.text : colors.textSecondary }]}>
+            {item.name}
+          </Text>
+          <Text numberOfLines={3} style={[styles.cardDescription, typography.caption, { color: colors.textMuted }]}>{item.description}</Text>
+        </View>
+        <View style={[styles.rarity, { backgroundColor: `${rarityColor}18` }]}>
+          <Text style={[typography.caption, { color: rarityColor, fontWeight: '800' }]}>{RARITY_LABELS[item.rarity]}</Text>
+        </View>
+      </MotionPressable>
+    </Animated.View>
   );
 }
 
 function FilterButton({ label, count, active, onPress }: { label: string; count: number; active: boolean; onPress: () => void }) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   return (
-    <Pressable
+    <MotionPressable
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
       onPress={onPress}
-      style={({ pressed }) => [
+      style={[
         styles.filter,
         {
           backgroundColor: active ? colors.accent : colors.surface,
           borderColor: active ? colors.accent : colors.borderSubtle,
           borderRadius: radius.pill,
-          opacity: pressed ? 0.75 : 1,
         },
       ]}
     >
       <Text style={[styles.filterLabel, typography.caption, { color: active ? colors.textInverse : colors.textMuted, fontWeight: '800' }]}>{label}</Text>
       <Text style={[styles.filterCount, typography.caption, { color: active ? colors.textInverse : colors.textSecondary }]}>{count}</Text>
-    </Pressable>
+    </MotionPressable>
   );
 }
 
 function AchievementDetails({ item, onClose }: { item: AchievementItem | null; onClose: () => void }) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
-  const insets = useSafeAreaInsets();
   const rarityColor = item ? RARITY_COLORS[item.rarity] ?? colors.textMuted : colors.textMuted;
 
   return (
-    <Modal visible={item !== null} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
-      <View style={[styles.modalRoot, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 }]}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={onClose} style={StyleSheet.absoluteFillObject} />
-        {item ? (
-          <View style={[styles.detail, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.xl }]}>
+    <Overlay visible={item !== null} onClose={onClose} align="center">
+      {item ? (
+        <View style={[styles.detail, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.xl }]}>
+          <ScrollView
+            style={styles.detailScroll}
+            bounces={false}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.detailContent}
+          >
             <View style={[styles.detailIcon, { backgroundColor: `${rarityColor}22`, borderColor: `${rarityColor}66` }]}>
               <LucideIcon name={item.isUnlocked ? ICONS[item.code] ?? 'award' : 'lock'} size={40} color={item.isUnlocked ? rarityColor : colors.textMuted} />
             </View>
@@ -286,17 +342,17 @@ function AchievementDetails({ item, onClose }: { item: AchievementItem | null; o
                 {new Date(item.unlockedAt).toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' })}
               </Text>
             ) : null}
-            <Pressable
+            <MotionPressable
               accessibilityRole="button"
               onPress={onClose}
-              style={({ pressed }) => [styles.close, { backgroundColor: colors.accent, borderRadius: radius.md, opacity: pressed ? 0.82 : 1 }]}
+              style={[styles.close, { backgroundColor: colors.accent, borderRadius: radius.md }]}
             >
               <Text style={[styles.closeLabel, { color: colors.textInverse }]}>Закрыть</Text>
-            </Pressable>
-          </View>
-        ) : null}
-      </View>
-    </Modal>
+            </MotionPressable>
+          </ScrollView>
+        </View>
+      ) : null}
+    </Overlay>
   );
 }
 
@@ -324,7 +380,9 @@ const styles = StyleSheet.create({
   filterLabel: { fontSize: 11, lineHeight: 15 },
   filterCount: { fontSize: 11, lineHeight: 15, fontWeight: '800' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  card: { width: '48%', minHeight: 190, borderWidth: 1, padding: 12 },
+  cardShell: { width: '48%', position: 'relative' },
+  card: { minHeight: 190, borderWidth: 1, padding: 12, position: 'relative', overflow: 'hidden' },
+  cardGlow: { position: 'absolute', width: 100, height: 100, borderRadius: 50, top: -50, right: -30, opacity: 0 },
   cardTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
   iconWrap: { width: 54, height: 54, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   check: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
@@ -332,8 +390,9 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 14, lineHeight: 19 },
   cardDescription: { marginTop: 4 },
   rarity: { alignSelf: 'flex-start', borderRadius: 7, paddingHorizontal: 7, paddingVertical: 3, marginTop: 8 },
-  modalRoot: { flex: 1, justifyContent: 'center', paddingHorizontal: 18, backgroundColor: 'rgba(0,0,0,0.7)' },
-  detail: { width: '100%', maxWidth: 420, alignSelf: 'center', borderWidth: 1, padding: 22, alignItems: 'center' },
+  detail: { width: '100%', maxWidth: 420, maxHeight: '86%', alignSelf: 'center', borderWidth: 1, overflow: 'hidden' },
+  detailScroll: { flexShrink: 1 },
+  detailContent: { padding: 22, alignItems: 'center' },
   detailIcon: { width: 82, height: 82, borderRadius: 28, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   detailRarity: { letterSpacing: 0.6 },
   detailTitle: { textAlign: 'center', marginTop: 5 },

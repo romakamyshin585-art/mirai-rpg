@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { QuestRow } from '../../repos/quest_repo';
 import type { Category } from '../../domain/category';
 import { CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
 import { HAPTIC_EVENTS, useHaptics } from '../motion';
+import { MotionPressable } from './MotionPressable';
+import { Overlay } from './Overlay';
 
 const CATEGORY_ICONS: Record<Category, string> = {
   health: 'heart-pulse',
@@ -24,7 +25,6 @@ type FocusModeModalProps = {
 
 export function FocusModeModal({ visible, quest, onClose, onComplete }: FocusModeModalProps) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
-  const insets = useSafeAreaInsets();
   const { trigger } = useHaptics();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,92 +57,77 @@ export function FocusModeModal({ visible, quest, onClose, onComplete }: FocusMod
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      statusBarTranslucent
-      onRequestClose={requestClose}
-    >
-      <View style={[styles.root, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={requestClose} style={StyleSheet.absoluteFillObject} />
-        <View
-          style={[
-            styles.sheet,
-            {
-              backgroundColor: colors.surface,
-              borderColor: colors.border,
-              borderRadius: radius.xl,
-            },
-          ]}
-        >
-          <View style={styles.handleRow}>
-            <View style={[styles.handle, { backgroundColor: colors.border }]} />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Закрыть"
-              disabled={busy}
-              onPress={requestClose}
-              style={({ pressed }) => [
-                styles.close,
-                { backgroundColor: colors.surfaceElevated, borderRadius: 20, opacity: pressed ? 0.7 : 1 },
-              ]}
-            >
-              <LucideIcon name="x" size={20} color={colors.textSecondary} />
-            </Pressable>
-          </View>
-          <ScrollView
-            bounces={false}
-            style={styles.scroll}
-            contentContainerStyle={styles.content}
-            showsVerticalScrollIndicator={false}
+    <Overlay visible={visible} onClose={requestClose} align="center">
+      <View
+        style={[
+          styles.sheet,
+          {
+            backgroundColor: colors.surface,
+            borderColor: colors.border,
+            borderRadius: radius.xl,
+          },
+        ]}
+      >
+        <View style={styles.handleRow}>
+          <View style={[styles.handle, { backgroundColor: colors.border }]} />
+          <MotionPressable
+            accessibilityRole="button"
+            accessibilityLabel="Закрыть"
+            disabled={busy}
+            onPress={requestClose}
+            style={[styles.close, { backgroundColor: colors.surfaceElevated, borderRadius: 20, opacity: busy ? 0.6 : 1 }]}
           >
-            <View style={[styles.icon, { backgroundColor: `${categoryColor}22`, borderColor: `${categoryColor}55` }]}>
-              <LucideIcon name={CATEGORY_ICONS[quest.category]} size={28} color={categoryColor} />
-            </View>
-            <Text style={[styles.category, typography.caption, { color: categoryColor, fontWeight: '800' }]}>
-              {CATEGORY_LABELS[quest.category].toUpperCase()}
-            </Text>
-            <Text style={[styles.title, typography.title, { color: colors.text }]}>{quest.title}</Text>
-            {quest.description ? (
-              <Text style={[styles.description, typography.body, { color: colors.textSecondary }]}>{quest.description}</Text>
-            ) : null}
-            <View style={[styles.metrics, { borderColor: colors.borderSubtle }]}>
-              <View style={styles.metric}>
-                <Text style={[styles.metricValue, typography.numeric, { color: colors.accent }]}>+{quest.xp_reward}</Text>
-                <Text style={[styles.metricLabel, typography.caption, { color: colors.textMuted }]}>XP</Text>
-              </View>
-              <View style={[styles.metricDivider, { backgroundColor: colors.border }]} />
-              <View style={styles.metric}>
-                <Text style={[styles.metricValue, typography.numeric, { color: colors.text }]}>{quest.difficulty}/3</Text>
-                <Text style={[styles.metricLabel, typography.caption, { color: colors.textMuted }]}>сложность</Text>
-              </View>
-            </View>
-            {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
-            <Pressable
-              accessibilityRole="button"
-              disabled={busy}
-              onPress={() => void complete()}
-              style={({ pressed }) => [
-                styles.primary,
-                { backgroundColor: colors.accent, borderRadius: radius.md, opacity: busy || pressed ? 0.75 : 1 },
-              ]}
-            >
-              {busy ? <ActivityIndicator color={colors.textInverse} /> : <LucideIcon name="check" size={19} color={colors.textInverse} />}
-              <Text style={[styles.primaryLabel, { color: colors.textInverse }]}>{busy ? 'Сохраняем…' : 'Отметить выполненным'}</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              disabled={busy}
-              onPress={requestClose}
-              style={({ pressed }) => [styles.secondary, { opacity: pressed ? 0.65 : 1 }]}
-            >
-              <Text style={[styles.secondaryLabel, typography.bodyStrong, { color: colors.textSecondary }]}>Закрыть</Text>
-            </Pressable>
-          </ScrollView>
+            <LucideIcon name="x" size={20} color={colors.textSecondary} />
+          </MotionPressable>
         </View>
+        <ScrollView
+          bounces={false}
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={[styles.icon, { backgroundColor: `${categoryColor}22`, borderColor: `${categoryColor}55` }]}>
+            <LucideIcon name={CATEGORY_ICONS[quest.category]} size={28} color={categoryColor} />
+          </View>
+          <Text style={[styles.category, typography.caption, { color: categoryColor, fontWeight: '800' }]}>
+            {CATEGORY_LABELS[quest.category].toUpperCase()}
+          </Text>
+          <Text style={[styles.title, typography.title, { color: colors.text }]}>{quest.title}</Text>
+          {quest.description ? (
+            <Text style={[styles.description, typography.body, { color: colors.textSecondary }]}>{quest.description}</Text>
+          ) : null}
+          <View style={[styles.metrics, { borderColor: colors.borderSubtle }]}>
+            <View style={styles.metric}>
+              <Text style={[styles.metricValue, typography.numeric, { color: colors.accent }]}>+{quest.xp_reward}</Text>
+              <Text style={[styles.metricLabel, typography.caption, { color: colors.textMuted }]}>XP</Text>
+            </View>
+            <View style={[styles.metricDivider, { backgroundColor: colors.border }]} />
+            <View style={styles.metric}>
+              <Text style={[styles.metricValue, typography.numeric, { color: colors.text }]}>{quest.difficulty}/3</Text>
+              <Text style={[styles.metricLabel, typography.caption, { color: colors.textMuted }]}>сложность</Text>
+            </View>
+          </View>
+          {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+          <MotionPressable
+            accessibilityRole="button"
+            disabled={busy}
+            onPress={() => void complete()}
+            style={[styles.primary, { backgroundColor: colors.accent, borderRadius: radius.md, opacity: busy ? 0.7 : 1 }]}
+          >
+            {busy ? <ActivityIndicator color={colors.textInverse} /> : <LucideIcon name="check" size={19} color={colors.textInverse} />}
+            <Text style={[styles.primaryLabel, { color: colors.textInverse }]}>{busy ? 'Сохраняем…' : 'Отметить выполненным'}</Text>
+          </MotionPressable>
+          <MotionPressable
+            accessibilityRole="button"
+            disabled={busy}
+            onPress={requestClose}
+            style={[styles.secondary, { opacity: busy ? 0.6 : 1 }]}
+          >
+            <Text style={[styles.secondaryLabel, typography.bodyStrong, { color: colors.textSecondary }]}>Закрыть</Text>
+          </MotionPressable>
+        </ScrollView>
       </View>
-    </Modal>
+    </Overlay>
   );
 }
 

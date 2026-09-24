@@ -122,7 +122,7 @@ export class AchievementService {
     const history = await this.loadHistory(userId);
     if (history.length === 0) {
       await this.pbRepo.replaceForUser(userId, []);
-      return [];
+      return this.reconcileUnlocks(userId, []);
     }
 
     const dayTotals = new Map<string, number>();
@@ -172,7 +172,36 @@ export class AchievementService {
       ...(dayRecord ? [dayRecord] : []),
       ...categoryRecords.values(),
     ]);
-    return this.unlockCodes(userId, codes);
+    return this.reconcileUnlocks(userId, codes);
+  }
+
+  private async reconcileUnlocks(userId: string, codes: Iterable<string>): Promise<NewlyUnlocked[]> {
+    const qualifiedCodes = new Set(codes);
+    const [catalog, unlocks] = await Promise.all([
+      this.aRepo.listCatalog(),
+      this.aRepo.listUnlocks(userId),
+    ]);
+    const definitionsById = new Map(catalog.map(item => [item.id, item]));
+    const newlyUnlocked: NewlyUnlocked[] = [];
+
+    for (const definition of catalog) {
+      if (qualifiedCodes.has(definition.code) && await this.aRepo.tryUnlock(userId, definition.id)) {
+        newlyUnlocked.push({
+          code: definition.code,
+          name: definition.name,
+          rarity: definition.rarity,
+        });
+      }
+    }
+
+    for (const unlock of unlocks) {
+      const definition = definitionsById.get(unlock.achievement_id);
+      if (!definition || !qualifiedCodes.has(definition.code)) {
+        await this.aRepo.deleteUnlock(userId, unlock.achievement_id);
+      }
+    }
+
+    return newlyUnlocked;
   }
 
   async removeUnlocks(userId: string, codes: string[]): Promise<RemoveUnlocksResult> {

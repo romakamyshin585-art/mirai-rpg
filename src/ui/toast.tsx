@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import { StyleSheet, Text, View } from 'react-native';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { MotionPressable } from './components/MotionPressable';
+import { duration, useReducedMotion } from './motion';
 import { useTheme } from './theme';
 
 type ToastProps = {
@@ -13,7 +15,24 @@ type ToastProps = {
 
 export function Toast({ message, actionLabel, onAction, onHide, bottomOffset }: ToastProps) {
   const { colors, radius, typography } = useTheme();
+  const reduced = useReducedMotion();
+  const progress = useSharedValue(0);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!message) {
+      progress.value = 0;
+      return;
+    }
+    progress.value = reduced
+      ? withTiming(1, { duration: duration.reducedMotion, easing: Easing.out(Easing.cubic) })
+      : withTiming(1, { duration: duration.micro, easing: Easing.out(Easing.cubic) });
+  }, [message, progress, reduced]);
+
+  const hostStyle = useAnimatedStyle(() => ({
+    opacity: progress.value,
+    transform: reduced ? [] : [{ translateY: (1 - progress.value) * 12 }],
+  }));
 
   useEffect(() => {
     if (!message) return;
@@ -38,9 +57,8 @@ export function Toast({ message, actionLabel, onAction, onHide, bottomOffset }: 
 
   return (
     <Animated.View
-      entering={FadeInDown.duration(180)}
       pointerEvents="box-none"
-      style={[styles.host, { bottom: bottomOffset }]}
+      style={[styles.host, hostStyle, { bottom: bottomOffset }]}
     >
       <View
         style={[
@@ -59,20 +77,20 @@ export function Toast({ message, actionLabel, onAction, onHide, bottomOffset }: 
           {message}
         </Text>
         {actionLabel && onAction ? (
-          <Pressable
+          <MotionPressable
             accessibilityRole="button"
             accessibilityLabel={actionLabel}
             disabled={busy}
             onPress={() => void runAction()}
-            style={({ pressed }) => [
+            style={[
               styles.action,
-              { backgroundColor: colors.accentSoft, borderRadius: radius.sm, opacity: pressed || busy ? 0.7 : 1 },
+              { backgroundColor: colors.accentSoft, borderRadius: radius.sm, opacity: busy ? 0.7 : 1 },
             ]}
           >
             <Text style={[styles.actionLabel, typography.caption, { color: colors.accent, fontWeight: '800' }]}>
               {busy ? '…' : actionLabel}
             </Text>
-          </Pressable>
+          </MotionPressable>
         ) : null}
       </View>
     </Animated.View>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
 import type { QuestRow } from '../../repos/quest_repo';
@@ -8,6 +9,10 @@ import { CATEGORIES, type Category } from '../../domain/category';
 import { levelProgress } from '../../domain/level';
 import { BOTTOM_NAV_BASE_HEIGHT, CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
+import { MotionPressable } from '../components/MotionPressable';
+import { MotionNumber } from '../components/MotionNumber';
+import { MotionProgressBar } from '../components/MotionProgressBar';
+import { useScrollHeader } from '../motion';
 
 const DAILY_GOAL = 5;
 
@@ -44,6 +49,7 @@ type HomeScreenProps = {
 export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const insets = useSafeAreaInsets();
+  const { onScroll: onHeaderScroll, style: headerStyle } = useScrollHeader();
   const [character, setCharacter] = useState<CharacterRow | null>(null);
   const [stats, setStats] = useState<StatRow[]>([]);
   const [todayXp, setTodayXp] = useState(0);
@@ -105,13 +111,13 @@ export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
         <LucideIcon name="cloud-off" size={38} color={colors.danger} />
         <Text style={[styles.errorTitle, { color: colors.text }]}>Home временно недоступен</Text>
         <Text style={[styles.errorText, { color: colors.textMuted }]}>{error ?? 'Не удалось загрузить данные'}</Text>
-        <Pressable
+        <MotionPressable
           accessibilityRole="button"
           onPress={() => void loadData()}
-          style={({ pressed }) => [styles.retry, { backgroundColor: colors.accent, opacity: pressed ? 0.8 : 1 }]}
+          style={[styles.retry, { backgroundColor: colors.accent }]}
         >
           <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Повторить</Text>
-        </Pressable>
+        </MotionPressable>
       </View>
     );
   }
@@ -122,7 +128,9 @@ export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
   const classLabel = character.class ? CLASS_LABELS[character.class] ?? character.class : 'Путь ещё не выбран';
 
   return (
-    <ScrollView
+    <Animated.ScrollView
+      onScroll={onHeaderScroll}
+      scrollEventThrottle={16}
       style={[styles.scroll, { backgroundColor: colors.bg }]}
       contentContainerStyle={[
         styles.content,
@@ -139,19 +147,21 @@ export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
         />
       }
     >
-      <View style={styles.heading}>
-        <View style={styles.headingCopy}>
-          <Text style={[styles.greeting, typography.caption, { color: colors.textMuted }]}>{greeting}</Text>
-          <Text style={[styles.name, typography.title, { color: colors.text }]}>{character.name || 'Hero'}</Text>
-          <Text style={[styles.subtitle, typography.caption, { color: colors.textMuted }]}>Каждый день — это новый квест</Text>
-        </View>
-        <View style={[styles.avatar, { borderColor: colors.accent, backgroundColor: colors.surfaceElevated }]}>
-          <LucideIcon name="user-round" size={29} color={colors.accent} />
-          <View style={[styles.levelDot, { backgroundColor: colors.accent, borderColor: colors.bg }]}>
-            <Text style={[styles.levelDotText, { color: colors.textInverse }]}>{character.level}</Text>
+      <Animated.View style={headerStyle}>
+        <View style={styles.heading}>
+          <View style={styles.headingCopy}>
+            <Text style={[styles.greeting, typography.caption, { color: colors.textMuted }]}>{greeting}</Text>
+            <Text style={[styles.name, typography.title, { color: colors.text }]}>{character.name || 'Hero'}</Text>
+            <Text style={[styles.subtitle, typography.caption, { color: colors.textMuted }]}>Каждый день — это новый квест</Text>
+          </View>
+          <View style={[styles.avatar, { borderColor: colors.accent, backgroundColor: colors.surfaceElevated }]}>
+            <LucideIcon name="user-round" size={29} color={colors.accent} />
+            <View style={[styles.levelDot, { backgroundColor: colors.accent, borderColor: colors.bg }]}>
+              <MotionNumber key={`level-${character.level}`} value={character.level} style={[styles.levelDotText, { color: colors.textInverse }]} />
+            </View>
           </View>
         </View>
-      </View>
+      </Animated.View>
 
       <View style={[styles.playerCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, borderRadius: radius.xl }]}>
         <View style={styles.playerTop}>
@@ -170,9 +180,14 @@ export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
           <Text style={[styles.xpLabel, typography.caption, { color: colors.textMuted }]}>{progress.xp_into_level} / {progress.xp_for_next_level} XP</Text>
           <Text style={[styles.xpLabel, typography.caption, { color: colors.textMuted }]}>{progress.level_progress_pct}%</Text>
         </View>
-        <View style={[styles.xpTrack, { backgroundColor: colors.surfaceFloating }]}>
-          <View style={[styles.xpFill, { width: `${progress.level_progress_pct}%`, backgroundColor: colors.accent }]} />
-        </View>
+        <MotionProgressBar
+          value={progress.level_progress_pct / 100}
+          trackColor={colors.surfaceFloating}
+          fillColor={colors.accent}
+          height={7}
+          style={styles.xpTrack}
+          accessibilityLabel="Прогресс уровня"
+        />
       </View>
 
       <View style={styles.metricsRow}>
@@ -183,7 +198,7 @@ export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
             </View>
             <Text style={[styles.metricLabel, typography.caption, { color: colors.textMuted }]}>Сегодня</Text>
           </View>
-          <Text style={[styles.metricValue, typography.numericDisplay, { color: colors.accent }]}>{todayXp}</Text>
+           <MotionNumber key={`today-xp-${todayXp}`} value={todayXp} style={[styles.metricValue, typography.numericDisplay, { color: colors.accent }]} />
           <Text style={[styles.metricHint, typography.caption, { color: colors.textMuted }]}>XP заработано</Text>
         </View>
         <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
@@ -193,7 +208,7 @@ export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
             </View>
             <Text style={[styles.metricLabel, typography.caption, { color: colors.textMuted }]}>Серия</Text>
           </View>
-          <Text style={[styles.metricValue, typography.numericDisplay, { color: colors.text }]}>{streak}</Text>
+           <MotionNumber key={`streak-${streak}`} value={streak} style={[styles.metricValue, typography.numericDisplay, { color: colors.text }]} />
           <Text style={[styles.metricHint, typography.caption, { color: colors.textMuted }]}>дней подряд</Text>
         </View>
       </View>
@@ -222,13 +237,10 @@ export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
         </View>
       </View>
 
-      <Pressable
+      <MotionPressable
         accessibilityRole="button"
         onPress={onOpenQuests}
-        style={({ pressed }) => [
-          styles.goalCard,
-          { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, opacity: pressed ? 0.88 : 1 },
-        ]}
+        style={[styles.goalCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle }]}
       >
         <View style={styles.goalIcon}>
           <LucideIcon name="target" size={24} color={colors.accent} />
@@ -238,23 +250,28 @@ export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
             <Text style={[styles.goalTitle, typography.bodyStrong, { color: colors.text }]}>Цель на сегодня</Text>
             <Text style={[styles.goalCount, typography.numeric, { color: colors.accent }]}>{completedToday}/{DAILY_GOAL}</Text>
           </View>
-          <View style={[styles.goalTrack, { backgroundColor: colors.surfaceFloating }]}>
-            <View style={[styles.goalFill, { width: `${goalProgress * 100}%`, backgroundColor: colors.accent }]} />
-          </View>
+           <MotionProgressBar
+             value={goalProgress}
+             trackColor={colors.surfaceFloating}
+             fillColor={colors.accent}
+             height={6}
+             style={styles.goalTrack}
+             accessibilityLabel="Прогресс дневной цели"
+           />
           <Text style={[styles.goalHint, typography.caption, { color: colors.textMuted }]}>Заверши ещё {Math.max(0, DAILY_GOAL - completedToday)} квестов</Text>
         </View>
         <LucideIcon name="chevron-right" size={19} color={colors.textMuted} />
-      </Pressable>
+      </MotionPressable>
 
       <View style={styles.sectionHeading}>
         <Text style={[styles.sectionTitle, typography.bodyStrong, { color: colors.text }]}>Следующий квест</Text>
         <Text style={[styles.sectionMeta, typography.caption, { color: colors.textMuted }]}>{activeQuests.length} доступно</Text>
       </View>
       {nextQuest ? (
-        <Pressable
+        <MotionPressable
           accessibilityRole="button"
           onPress={onOpenQuests}
-          style={({ pressed }) => [styles.nextCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, opacity: pressed ? 0.85 : 1 }]}
+          style={[styles.nextCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
         >
           <View style={[styles.nextIcon, { backgroundColor: `${colors.catCareer}20` }]}>
             <LucideIcon name="scroll-text" size={23} color={colors.catCareer} />
@@ -267,21 +284,21 @@ export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
             <Text style={[styles.nextXp, typography.numeric, { color: colors.accent }]}>+{nextQuest.xp_reward}</Text>
             <Text style={[styles.nextXpLabel, typography.caption, { color: colors.textMuted }]}>XP</Text>
           </View>
-        </Pressable>
+        </MotionPressable>
       ) : (
-        <Pressable
+        <MotionPressable
           accessibilityRole="button"
           onPress={onOpenQuests}
-          style={({ pressed }) => [styles.nextCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, opacity: pressed ? 0.85 : 1 }]}
+          style={[styles.nextCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
         >
           <View style={styles.nextCopy}>
             <Text style={[styles.nextTitle, typography.bodyStrong, { color: colors.text }]}>Добавь первый квест</Text>
             <Text style={[styles.nextMeta, typography.caption, { color: colors.textMuted }]}>Открой Quests и начни путь</Text>
           </View>
           <LucideIcon name="plus" size={22} color={colors.accent} />
-        </Pressable>
+        </MotionPressable>
       )}
-    </ScrollView>
+    </Animated.ScrollView>
   );
 }
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import type { AppContext } from '../app_context';
 import type { QuestRow } from '../../repos/quest_repo';
 import { CATEGORIES, type Category } from '../../domain/category';
@@ -9,7 +9,9 @@ import { BOTTOM_NAV_BASE_HEIGHT, CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
 import { CreateQuestModal } from '../create_quest_modal';
 import { FocusModeModal } from '../components/FocusModeModal';
-import { HAPTIC_EVENTS, useHaptics } from '../motion';
+import { MotionPressable } from '../components/MotionPressable';
+import { HAPTIC_EVENTS, duration, scale, spring, useHaptics, useReducedMotion } from '../motion';
+import { MotionProgressBar } from '../components/MotionProgressBar';
 
 const CATEGORY_ICONS: Record<Category, string> = {
   health: 'heart-pulse',
@@ -28,6 +30,10 @@ const DIFFICULTY_LABELS: Record<number, string> = {
 export type QuestCompletionNotice = {
   message: string;
   achievementNames: string[];
+  achievementCodes: string[];
+  xpAwarded: number;
+  leveledUp: boolean;
+  newLevel: number;
   undo: () => Promise<void>;
 };
 
@@ -138,11 +144,15 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
       };
 
       const unlockSuffix = unlocks[0] ? ` · ${unlocks[0].name}` : '';
-      onQuestCompleted({
-        message: `Квест выполнен · +${result.xpAwarded} XP${unlockSuffix}`,
-        achievementNames: unlocks.map(item => item.name),
-        undo,
-      });
+       onQuestCompleted({
+         message: `Квест выполнен · +${result.xpAwarded} XP${unlockSuffix}`,
+         achievementNames: unlocks.map(item => item.name),
+         achievementCodes: unlocks.map(item => item.code),
+         xpAwarded: result.xpAwarded,
+         leveledUp: result.leveledUp,
+         newLevel: result.newLevel,
+         undo,
+       });
       return true;
     } catch (value) {
       Alert.alert('Ошибка выполнения', value instanceof Error ? value.message : String(value));
@@ -254,13 +264,13 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
           <LucideIcon name="cloud-off" size={34} color={colors.danger} />
           <Text style={[styles.stateTitle, { color: colors.text }]}>Не удалось загрузить квесты</Text>
           <Text style={[styles.stateText, { color: colors.textMuted }]}>{error}</Text>
-          <Pressable
+          <MotionPressable
             accessibilityRole="button"
             onPress={() => void reload()}
-            style={({ pressed }) => [styles.retry, { backgroundColor: colors.accent, opacity: pressed ? 0.8 : 1 }]}
+            style={[styles.retry, { backgroundColor: colors.accent }]}
           >
             <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Повторить</Text>
-          </Pressable>
+          </MotionPressable>
         </View>
       ) : (
         <FlatList
@@ -302,37 +312,36 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
               </View>
               <Text style={[styles.stateTitle, { color: colors.text }]}>В этой категории пока пусто</Text>
               <Text style={[styles.stateText, { color: colors.textMuted }]}>Добавь свой квест или выбери другую категорию</Text>
-              <Pressable
+              <MotionPressable
                 accessibilityRole="button"
                 onPress={() => setShowCreate(true)}
-                style={({ pressed }) => [styles.retry, { backgroundColor: colors.accent, opacity: pressed ? 0.8 : 1 }]}
+                style={[styles.retry, { backgroundColor: colors.accent }]}
               >
                 <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Добавить квест</Text>
-              </Pressable>
+              </MotionPressable>
             </View>
           }
         />
       )}
 
-      <Pressable
+      <MotionPressable
         accessibilityRole="button"
         accessibilityLabel="Добавить квест"
         disabled={operationLocked}
         onPress={() => setShowCreate(true)}
-        style={({ pressed }) => [
+        style={[
           styles.fab,
           {
             right: 16,
             bottom: BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 16,
             backgroundColor: colors.accent,
             borderRadius: radius.pill,
-            opacity: operationLocked ? 0.5 : pressed ? 0.82 : 1,
-            transform: [{ scale: pressed ? 0.96 : 1 }],
+            opacity: operationLocked ? 0.5 : 1,
           },
         ]}
       >
         <LucideIcon name="plus" size={28} color={colors.textInverse} strokeWidth={2.5} />
-      </Pressable>
+      </MotionPressable>
 
       <CreateQuestModal visible={showCreate} onClose={() => setShowCreate(false)} onSubmit={createQuest} />
       <FocusModeModal
@@ -357,10 +366,59 @@ type QuestCardProps = {
 
 function QuestCard({ quest, busy, disabled, completed, onComplete, onOpen, onArchive }: QuestCardProps) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
+  const reduced = useReducedMotion();
   const categoryColor = colors[`cat${quest.category.charAt(0).toUpperCase()}${quest.category.slice(1)}` as keyof typeof colors];
+  const pressProgress = useSharedValue(1);
+  const checkProgress = useSharedValue(1);
+  const xpOpacity = useSharedValue(0);
+  const xpOffset = useSharedValue(0);
+
+  useEffect(() => {
+    if (!completed) {
+      pressProgress.value = reduced ? 1 : withTiming(1, { duration: duration.standard });
+      checkProgress.value = 1;
+      xpOpacity.value = 0;
+      xpOffset.value = 0;
+      return;
+    }
+
+    pressProgress.value = reduced
+      ? 1
+      : withSequence(
+          withTiming(scale.cardPress, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
+          withSpring(1, spring.card),
+        );
+    checkProgress.value = reduced
+      ? 1
+      : withSequence(
+          withTiming(1.18, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
+          withSpring(1, spring.celebration),
+        );
+    xpOpacity.value = reduced
+      ? withDelay(180, withSequence(withTiming(1, { duration: duration.reducedMotion }), withDelay(180, withTiming(0, { duration: duration.reducedMotion }))))
+      : withDelay(180, withSequence(withTiming(1, { duration: duration.micro }), withDelay(180, withTiming(0, { duration: duration.standard }))));
+    xpOffset.value = reduced ? 0 : withDelay(180, withTiming(-28, { duration: duration.standard, easing: Easing.out(Easing.cubic) }));
+  }, [checkProgress, completed, pressProgress, reduced, xpOffset, xpOpacity]);
+
+  const cardStyle = useAnimatedStyle(() => ({
+    transform: reduced ? [] : [{ scale: pressProgress.value }],
+  }));
+  const checkStyle = useAnimatedStyle(() => ({
+    transform: reduced ? [] : [{ scale: checkProgress.value }],
+  }));
+  const xpStyle = useAnimatedStyle(() => ({
+    opacity: xpOpacity.value,
+    transform: reduced ? [] : [{ translateY: xpOffset.value }],
+  }));
+  const handleCardPressIn = () => {
+    if (!reduced) pressProgress.value = withSpring(scale.cardPress, spring.card);
+  };
+  const handleCardPressOut = () => {
+    if (!reduced) pressProgress.value = withSpring(1, spring.card);
+  };
 
   return (
-    <View
+    <Animated.View
       style={[
         styles.questCard,
         {
@@ -368,8 +426,12 @@ function QuestCard({ quest, busy, disabled, completed, onComplete, onOpen, onArc
           borderColor: completed ? `${colors.success}80` : colors.borderSubtle,
           borderRadius: radius.lg,
         },
+        cardStyle,
       ]}
     >
+      <Animated.View pointerEvents="none" style={[styles.xpBurst, xpStyle]}>
+        <Text style={[styles.xpBurstText, { color: colors.accent }]}>+{quest.xp_reward} XP</Text>
+      </Animated.View>
       <View style={styles.questTop}>
         <View style={[styles.categoryIcon, { backgroundColor: `${categoryColor}20` }]}>
           <LucideIcon name={CATEGORY_ICONS[quest.category]} size={21} color={categoryColor} />
@@ -378,16 +440,18 @@ function QuestCard({ quest, busy, disabled, completed, onComplete, onOpen, onArc
           <View style={styles.questHeading}>
             <Text numberOfLines={2} style={[styles.questTitle, typography.bodyStrong, { color: colors.text }]}>{quest.title}</Text>
             {quest.is_system === 0 ? (
-              <Pressable
+              <MotionPressable
                 accessibilityRole="button"
                 accessibilityLabel={`Удалить ${quest.title}`}
                 disabled={disabled}
                 onPress={onArchive}
+                onPressIn={handleCardPressIn}
+                onPressOut={handleCardPressOut}
                 hitSlop={10}
-                style={({ pressed }) => [styles.archive, { opacity: pressed ? 0.55 : 1 }]}
+                style={[styles.archive, { opacity: disabled ? 0.5 : 1 }]}
               >
                 <LucideIcon name="x" size={17} color={colors.textMuted} />
-              </Pressable>
+              </MotionPressable>
             ) : null}
           </View>
           {quest.description ? (
@@ -406,36 +470,40 @@ function QuestCard({ quest, busy, disabled, completed, onComplete, onOpen, onArc
         </View>
       </View>
       <View style={styles.actions}>
-        <Pressable
+        <MotionPressable
           accessibilityRole="button"
           disabled={disabled}
           onPress={onOpen}
-          style={({ pressed }) => [
+          onPressIn={handleCardPressIn}
+          onPressOut={handleCardPressOut}
+          style={[
             styles.detailsButton,
-            { borderColor: colors.border, borderRadius: radius.sm, opacity: pressed || disabled ? 0.6 : 1 },
+            { borderColor: colors.border, borderRadius: radius.sm, opacity: disabled ? 0.6 : 1 },
           ]}
         >
           <LucideIcon name="maximize-2" size={16} color={colors.textSecondary} />
           <Text style={[styles.detailsLabel, typography.caption, { color: colors.textSecondary }]}>Подробнее</Text>
-        </Pressable>
-        <Pressable
+        </MotionPressable>
+        <MotionPressable
           accessibilityRole="button"
           accessibilityState={{ disabled, busy }}
           disabled={disabled}
           onPress={onComplete}
-          style={({ pressed }) => [
+          onPressIn={handleCardPressIn}
+          onPressOut={handleCardPressOut}
+          style={[
             styles.completeButton,
             {
               backgroundColor: completed ? colors.successSoft : colors.accent,
               borderRadius: radius.sm,
-              opacity: pressed ? 0.8 : 1,
+              opacity: disabled ? 0.6 : 1,
             },
           ]}
         >
           {busy ? (
             <ActivityIndicator size="small" color={colors.textInverse} />
           ) : completed ? (
-            <Animated.View entering={FadeIn.duration(160)} style={styles.completeContent}>
+            <Animated.View style={[styles.completeContent, checkStyle]}>
               <LucideIcon name="check" size={17} color={colors.success} />
               <Text style={[styles.completeLabel, { color: colors.success }]}>Выполнено</Text>
             </Animated.View>
@@ -445,9 +513,17 @@ function QuestCard({ quest, busy, disabled, completed, onComplete, onOpen, onArc
               <Text style={[styles.completeLabel, { color: colors.textInverse }]}>Готово</Text>
             </View>
           )}
-        </Pressable>
+        </MotionPressable>
       </View>
-    </View>
+      <MotionProgressBar
+        value={completed ? 1 : 0}
+        trackColor={colors.surfaceFloating}
+        fillColor={completed ? colors.success : colors.accent}
+        height={4}
+        style={styles.completionProgress}
+        accessibilityLabel={completed ? 'Квест выполнен' : 'Прогресс квеста'}
+      />
+    </Animated.View>
   );
 }
 
@@ -455,22 +531,21 @@ function FilterChip({ label, active, color, onPress }: { label: string; active: 
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const tint = color ?? colors.accent;
   return (
-    <Pressable
+    <MotionPressable
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
       onPress={onPress}
-      style={({ pressed }) => [
+      style={[
         styles.filter,
         {
           backgroundColor: active ? `${tint}22` : colors.surface,
           borderColor: active ? `${tint}88` : colors.borderSubtle,
           borderRadius: radius.pill,
-          opacity: pressed ? 0.72 : 1,
         },
       ]}
     >
       <Text style={[styles.filterLabel, typography.caption, { color: active ? tint : colors.textMuted, fontWeight: active ? '800' : '600' }]}>{label}</Text>
-    </Pressable>
+    </MotionPressable>
   );
 }
 
@@ -497,7 +572,10 @@ const styles = StyleSheet.create({
   summaryValue: { fontSize: 18, lineHeight: 22 },
   summaryLabel: { marginTop: 1 },
   summaryDivider: { width: 1, height: 30 },
-  questCard: { borderWidth: 1, padding: 14 },
+  questCard: { borderWidth: 1, padding: 14, position: 'relative', overflow: 'hidden' },
+  xpBurst: { position: 'absolute', top: 8, right: 14, zIndex: 2 },
+  xpBurstText: { fontFamily: 'Nunito', fontSize: 14, lineHeight: 18, fontWeight: '900' },
+  completionProgress: { marginTop: 10 },
   questTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 11 },
   categoryIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   questCopy: { flex: 1, minWidth: 0 },

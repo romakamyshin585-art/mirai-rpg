@@ -9,6 +9,7 @@ import { useTheme } from '../theme';
 import { SPACING } from '../theme';
 import { levelProgress } from '../../domain/level';
 import { LucideIcon } from '../components';
+import { duration, spring, useReducedMotion } from '../motion';
 
 interface PlayerHeaderProps {
   name: string;
@@ -36,17 +37,20 @@ const CLASS_ICON: Record<string, string> = {
 };
 
 export function PlayerHeader({ name, level, class: charClass, xp, xpForNextLevel, xpIntoLevel }: PlayerHeaderProps) {
-  const { colors, motion } = useTheme();
+  const { colors } = useTheme();
+  const reduced = useReducedMotion();
   const { numeric, caption, title, secondary } = useTheme().typographyStylesheet;
   const entranceProgress = useSharedValue(0);
 
   React.useEffect(() => {
-    entranceProgress.value = withSpring(1, { damping: 22, stiffness: 180 });
-  }, []);
+    entranceProgress.value = reduced
+      ? withTiming(1, { duration: duration.reducedMotion })
+      : withSpring(1, spring.card);
+  }, [entranceProgress, reduced]);
 
   const containerStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(entranceProgress.value, { duration: motion.durations.normal }),
-    transform: [{ translateY: interpolate(entranceProgress.value, [0, 1], [20, 0], Extrapolate.CLAMP) }],
+    opacity: entranceProgress.value,
+    transform: reduced ? [] : [{ translateY: interpolate(entranceProgress.value, [0, 1], [20, 0], Extrapolate.CLAMP) }],
   }));
 
   const progress = levelProgress(xp);

@@ -7,9 +7,9 @@ import { View, Text, StyleSheet } from 'react-native';
 import Animated, { useSharedValue, withSpring, withTiming, useAnimatedStyle, interpolate, Extrapolate } from 'react-native-reanimated';
 import { useTheme } from '../theme';
 import { SPACING } from '../theme';
-import { CATEGORY_COLORS } from '../theme';
+import { CATEGORY_COLORS, CATEGORY_LABELS } from '../theme';
 import { CATEGORIES, type Category } from '../../domain/category';
-import { CATEGORY_LABELS } from '../theme';
+import { duration, spring, useReducedMotion } from '../motion';
 import { LucideIcon } from '../components';
 
 const CATEGORY_ICONS: Record<Category, string> = {
@@ -37,30 +37,33 @@ export function DailyProgress({
   categoryXp,
   nextQuest,
 }: DailyProgressProps) {
-  const { colors, motion } = useTheme();
+  const { colors } = useTheme();
+  const reduced = useReducedMotion();
   const { numeric, numericDisplay, caption, section, body } = useTheme().typographyStylesheet;
   
   const entranceProgress = useSharedValue(0);
   const statEntrance = useSharedValue(0);
 
   React.useEffect(() => {
-    entranceProgress.value = withSpring(1, { damping: 22, stiffness: 180 });
-    statEntrance.value = withTiming(1, { duration: motion.durations.fast });
-  }, [motion.durations.fast]);
+    entranceProgress.value = reduced
+      ? withTiming(1, { duration: duration.reducedMotion })
+      : withSpring(1, spring.card);
+    statEntrance.value = withTiming(1, { duration: reduced ? duration.reducedMotion : duration.micro });
+  }, [entranceProgress, reduced, statEntrance]);
 
   const containerStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(entranceProgress.value, { duration: motion.durations.normal }),
-    transform: [{ translateY: interpolate(entranceProgress.value, [0, 1], [16, 0], Extrapolate.CLAMP) }],
+    opacity: entranceProgress.value,
+    transform: reduced ? [] : [{ translateY: interpolate(entranceProgress.value, [0, 1], [16, 0], Extrapolate.CLAMP) }],
   }));
 
   const mainStatStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(statEntrance.value, { duration: motion.durations.fast }),
-    transform: [{ scale: interpolate(statEntrance.value, [0, 1], [0.8, 1], Extrapolate.CLAMP) }],
+    opacity: statEntrance.value,
+    transform: reduced ? [] : [{ scale: interpolate(statEntrance.value, [0, 1], [0.8, 1], Extrapolate.CLAMP) }],
   }));
 
   const secondaryStatsStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(statEntrance.value, { duration: motion.durations.fast }),
-    transform: [{ translateY: interpolate(statEntrance.value, [0, 1], [12, 0], Extrapolate.CLAMP) }],
+    opacity: statEntrance.value,
+    transform: reduced ? [] : [{ translateY: interpolate(statEntrance.value, [0, 1], [12, 0], Extrapolate.CLAMP) }],
   }));
 
   return (

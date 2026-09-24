@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, RefreshControl, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import Animated, { Easing, Extrapolate, interpolate, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
 import { CompletionRepo, QuestRepo } from '../../repos/quest_repo';
@@ -7,6 +8,9 @@ import { dayKey } from '../../domain/time';
 import type { Category } from '../../domain/category';
 import { BOTTOM_NAV_BASE_HEIGHT, CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
+import { Overlay } from '../components/Overlay';
+import { MotionPressable } from '../components/MotionPressable';
+import { duration, spring, useReducedMotion, useScrollHeader } from '../motion';
 
 const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -38,14 +42,23 @@ type MonthDay = {
   inMonth: boolean;
 };
 
+type DayLayout = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 type CalendarScreenProps = {
   ctx: AppContext;
   revision: number;
+  onDataChanged: () => void;
 };
 
-export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
+export function CalendarScreen({ ctx, revision, onDataChanged }: CalendarScreenProps) {
   const { colors, typographyStylesheet: typography } = useTheme();
   const insets = useSafeAreaInsets();
+  const { onScroll: onHeaderScroll, style: headerStyle } = useScrollHeader();
   const [month, setMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -55,7 +68,16 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [undoingId, setUndoingId] = useState<string | null>(null);
+  const [undoError, setUndoError] = useState<string | null>(null);
+  const [dayLayouts, setDayLayouts] = useState<Record<string, DayLayout>>({});
   const requestId = useRef(0);
+  const reduced = useReducedMotion();
+  const monthTransition = useSharedValue(0);
+  const monthDirection = useSharedValue(1);
+  const selectionX = useSharedValue(0);
+  const selectionY = useSharedValue(0);
+  const selectionOpacity = useSharedValue(0);
 
   const reload = useCallback(async () => {
     const currentRequest = ++requestId.current;
@@ -99,6 +121,12 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
     void reload();
   }, [reload, revision]);
 
+  useEffect(() => {
+    monthTransition.value = reduced
+      ? withTiming(1, { duration: duration.reducedMotion, easing: Easing.out(Easing.cubic) })
+      : withTiming(1, { duration: duration.major, easing: Easing.out(Easing.cubic) });
+  }, [month, monthTransition, reduced]);
+
   const monthDays = useMemo(() => buildMonthDays(month), [month]);
   const todayKey = dayKey(new Date());
   const monthRows = useMemo(
@@ -112,9 +140,48 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
   const activeDays = Object.values(activity).filter(day => day.xp > 0).length;
   const selectedKey = selectedDate ? dayKey(selectedDate) : null;
   const selectedActivity = selectedKey ? activity[selectedKey] : null;
+  const selectedLayout = selectedKey ? dayLayouts[selectedKey] : undefined;
+
+  useEffect(() => {
+    if (!selectedLayout) {
+      selectionOpacity.value = withTiming(0, { duration: duration.micro });
+      return;
+    }
+    if (reduced) {
+      selectionX.value = selectedLayout.x;
+      selectionY.value = selectedLayout.y;
+      selectionOpacity.value = withTiming(1, { duration: duration.reducedMotion });
+      return;
+    }
+    selectionX.value = withSpring(selectedLayout.x, spring.card);
+    selectionY.value = withSpring(selectedLayout.y, spring.card);
+    selectionOpacity.value = withTiming(1, { duration: duration.micro, easing: Easing.out(Easing.cubic) });
+  }, [reduced, selectedLayout, selectionOpacity, selectionX, selectionY]);
+
+  const monthStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(monthTransition.value, [0, 1], [0.2, 1], Extrapolate.CLAMP),
+    transform: reduced ? [] : [{ translateX: interpolate(monthTransition.value, [0, 1], [monthDirection.value * 28, 0], Extrapolate.CLAMP) }],
+  }));
+
+  const selectionStyle = useAnimatedStyle(() => ({
+    opacity: selectionOpacity.value,
+    transform: reduced ? [] : [{ translateX: selectionX.value }, { translateY: selectionY.value }],
+  }));
+
+  const handleDayLayout = useCallback((key: string, event: LayoutChangeEvent) => {
+    const { x, y, width, height } = event.nativeEvent.layout;
+    setDayLayouts(current => {
+      const previous = current[key];
+      if (previous && previous.x === x && previous.y === y && previous.width === width && previous.height === height) return current;
+      return { ...current, [key]: { x, y, width, height } };
+    });
+  }, []);
 
   const moveMonth = (offset: number) => {
     setSelectedDate(null);
+    setUndoError(null);
+    monthDirection.value = offset >= 0 ? 1 : -1;
+    monthTransition.value = 0;
     setMonth(current => new Date(current.getFullYear(), current.getMonth() + offset, 1));
   };
 
@@ -124,9 +191,42 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
     setRefreshing(false);
   };
 
+  const openDay = useCallback((date: Date) => {
+    setUndoError(null);
+    setSelectedDate(date);
+  }, []);
+
+  const undoCompletion = useCallback(async (completionId: string) => {
+    setUndoingId(completionId);
+    setUndoError(null);
+    let changed = false;
+    try {
+      const result = await ctx.progression.undoQuestCompletion(ctx.userId, completionId);
+      if (!result.success) {
+        setUndoError('Не удалось отменить выполнение. Попробуй ещё раз.');
+        return false;
+      }
+      changed = true;
+      try {
+        await ctx.achievement.syncFromHistory(ctx.userId);
+      } catch {
+        setUndoError('Выполнение отменено. Достижения пересчитаются при следующем запуске.');
+      }
+      return true;
+    } catch (value) {
+      setUndoError(value instanceof Error ? value.message : String(value));
+      return false;
+    } finally {
+      if (changed) onDataChanged();
+      setUndoingId(null);
+    }
+  }, [ctx, onDataChanged]);
+
   return (
     <>
-      <ScrollView
+      <Animated.ScrollView
+        onScroll={onHeaderScroll}
+        scrollEventThrottle={16}
         style={[styles.scroll, { backgroundColor: colors.bg }]}
         contentContainerStyle={[
           styles.content,
@@ -143,16 +243,14 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
           />
         }
       >
-        <View style={styles.heading}>
-          <View>
-            <Text style={[styles.title, typography.title, { color: colors.text }]}>Календарь</Text>
-            <Text style={[styles.subtitle, typography.caption, { color: colors.textMuted }]}>Итоговый календарь и твоя активность</Text>
+        <Animated.View style={headerStyle}>
+          <View style={styles.heading}>
+            <View>
+              <Text style={[styles.title, typography.title, { color: colors.text }]}>Календарь</Text>
+              <Text style={[styles.subtitle, typography.caption, { color: colors.textMuted }]}>Итоговый календарь и твоя активность</Text>
+            </View>
           </View>
-          <View style={[styles.todayBadge, { backgroundColor: colors.accentSoft }]}>
-            <LucideIcon name="calendar-check" size={18} color={colors.accent} />
-            <Text style={[typography.caption, { color: colors.accent, fontWeight: '800' }]}>РФ</Text>
-          </View>
-        </View>
+        </Animated.View>
 
         {loading ? (
           <View style={styles.loadingState}>
@@ -164,13 +262,13 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
             <LucideIcon name="cloud-off" size={38} color={colors.danger} />
             <Text style={[styles.errorTitle, { color: colors.text }]}>Календарь не загрузился</Text>
             <Text style={[styles.errorText, { color: colors.textMuted }]}>{error}</Text>
-            <Pressable
+            <MotionPressable
               accessibilityRole="button"
               onPress={() => void reload()}
-              style={({ pressed }) => [styles.retry, { backgroundColor: colors.accent, opacity: pressed ? 0.8 : 1 }]}
+              style={[styles.retry, { backgroundColor: colors.accent }]}
             >
               <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Повторить</Text>
-            </Pressable>
+            </MotionPressable>
           </View>
         ) : (
           <>
@@ -191,23 +289,23 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
 
             <View style={[styles.calendarCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
               <View style={styles.monthHeader}>
-                <Pressable
+                <MotionPressable
                   accessibilityRole="button"
                   accessibilityLabel="Предыдущий месяц"
                   onPress={() => moveMonth(-1)}
-                  style={({ pressed }) => [styles.monthButton, { backgroundColor: colors.surfaceElevated, opacity: pressed ? 0.65 : 1 }]}
+                  style={[styles.monthButton, { backgroundColor: colors.surfaceElevated }]}
                 >
                   <LucideIcon name="chevron-left" size={20} color={colors.textSecondary} />
-                </Pressable>
+                </MotionPressable>
                 <Text style={[styles.monthTitle, typography.bodyStrong, { color: colors.text }]}>{formatMonth(month)}</Text>
-                <Pressable
+                <MotionPressable
                   accessibilityRole="button"
                   accessibilityLabel="Следующий месяц"
                   onPress={() => moveMonth(1)}
-                  style={({ pressed }) => [styles.monthButton, { backgroundColor: colors.surfaceElevated, opacity: pressed ? 0.65 : 1 }]}
+                  style={[styles.monthButton, { backgroundColor: colors.surfaceElevated }]}
                 >
                   <LucideIcon name="chevron-right" size={20} color={colors.textSecondary} />
-                </Pressable>
+                </MotionPressable>
               </View>
 
               <View style={styles.weekRow}>
@@ -215,7 +313,7 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
                   <Text key={day} style={[styles.weekday, typography.caption, { color: index >= 5 ? colors.textMuted : colors.textSecondary }]}>{day}</Text>
                 ))}
               </View>
-              <View style={styles.grid}>
+              <Animated.View style={[styles.grid, monthStyle]}>
                 {monthDays.map((day, index) => {
                   const dayActivity = activity[day.key];
                   const selected = selectedKey === day.key;
@@ -223,13 +321,14 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
                   const holiday = RUSSIAN_HOLIDAYS_2026.has(day.key);
                   const weekend = day.date.getDay() === 0 || day.date.getDay() === 6;
                   return (
-                    <Pressable
-                      key={`${day.key}-${index}`}
-                      disabled={!day.inMonth}
+                    <MotionPressable
+                       key={`${day.key}-${index}`}
+                       onLayout={event => handleDayLayout(day.key, event)}
+                       disabled={!day.inMonth}
                       accessibilityRole="button"
                       accessibilityLabel={`${formatDate(day.date)}: ${getDayStatus(day.date, holiday, weekend)}`}
                       accessibilityState={{ selected, disabled: !day.inMonth }}
-                      onPress={() => setSelectedDate(day.date)}
+                      onPress={() => openDay(day.date)}
                       style={[
                         styles.dayCell,
                         {
@@ -277,12 +376,28 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
                       >
                         {day.date.getDate()}
                       </Text>
-                      {dayActivity?.xp ? <View style={[styles.activityDot, { backgroundColor: colors.catHealth }]} /> : null}
+                       {dayActivity?.xp ? <CompletionMark color={colors.catHealth} /> : null}
                       {holiday && day.inMonth ? <View style={[styles.holidayDot, { backgroundColor: colors.catHealth }]} /> : null}
-                    </Pressable>
+                    </MotionPressable>
                   );
-                })}
-              </View>
+                 })}
+                {selectedLayout ? (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.selectionRing,
+                      {
+                        borderColor: colors.accent,
+                        left: reduced ? selectedLayout?.x ?? 0 : 0,
+                        top: reduced ? selectedLayout?.y ?? 0 : 0,
+                        width: selectedLayout?.width ?? 0,
+                        height: selectedLayout?.height ?? 0,
+                      },
+                      selectionStyle,
+                    ]}
+                  />
+                ) : null}
+              </Animated.View>
 
               <View style={[styles.legend, { borderTopColor: colors.borderSubtle }]}>
                 <LegendItem color={colors.textMuted} label="Рабочий" />
@@ -310,11 +425,11 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
                   const first = day.completions[0];
                   const [year, month, date] = day.key.split('-').map(Number);
                   return (
-                    <Pressable
+                    <MotionPressable
                       key={day.key}
                       accessibilityRole="button"
-                      onPress={() => setSelectedDate(new Date(year, month - 1, date))}
-                      style={({ pressed }) => [styles.recentRow, { opacity: pressed ? 0.7 : 1 }]}
+                      onPress={() => openDay(new Date(year, month - 1, date))}
+                      style={[styles.recentRow, {}]}
                     >
                       <View style={[styles.recentDate, { backgroundColor: colors.surfaceElevated }]}>
                         <Text style={[typography.numeric, { color: colors.accent }]}>{day.completions.length}</Text>
@@ -324,90 +439,154 @@ export function CalendarScreen({ ctx, revision }: CalendarScreenProps) {
                         <Text style={[typography.caption, { color: colors.textMuted }]}>{CATEGORY_LABELS[first.category]} · {day.xp} XP</Text>
                       </View>
                       <LucideIcon name="chevron-right" size={18} color={colors.textMuted} />
-                    </Pressable>
+                    </MotionPressable>
                   );
                 })
               )}
             </View>
           </>
         )}
-      </ScrollView>
+      </Animated.ScrollView>
 
       <DayModal
         date={selectedDate}
         activity={selectedActivity ?? EMPTY_ACTIVITY}
+        undoingId={undoingId}
+        undoError={undoError}
+        onUndo={undoCompletion}
         onClose={() => setSelectedDate(null)}
       />
     </>
   );
 }
 
-function DayModal({ date, activity, onClose }: { date: Date | null; activity: ActivityDay; onClose: () => void }) {
+function DayModal({
+  date,
+  activity,
+  undoingId,
+  undoError,
+  onUndo,
+  onClose,
+}: {
+  date: Date | null;
+  activity: ActivityDay;
+  undoingId: string | null;
+  undoError: string | null;
+  onUndo: (completionId: string) => Promise<boolean>;
+  onClose: () => void;
+}) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const insets = useSafeAreaInsets();
+  const [expandedCompletionId, setExpandedCompletionId] = useState<string | null>(null);
   const holiday = date ? RUSSIAN_HOLIDAYS_2026.has(dayKey(date)) : false;
   const weekend = date ? date.getDay() === 0 || date.getDay() === 6 : false;
 
+  useEffect(() => {
+    if (!date) setExpandedCompletionId(null);
+  }, [date]);
+
+  const close = () => {
+    setExpandedCompletionId(null);
+    onClose();
+  };
+
+  const confirmUndo = (item: CompletionItem) => {
+    setExpandedCompletionId(null);
+    Alert.alert(
+      'Отменить выполнение?',
+      `Квест «${item.title}» исчезнет из истории, а ${item.xp} XP будут вычтены из общего прогресса.`,
+      [
+        { text: 'Оставить', style: 'cancel' },
+        {
+          text: 'Отменить выполнение',
+          style: 'destructive',
+          onPress: () => {
+            void onUndo(item.id);
+          },
+        },
+      ],
+    );
+  };
+
   return (
-    <Modal visible={date !== null} transparent animationType="slide" statusBarTranslucent onRequestClose={onClose}>
-      <View style={styles.modalRoot}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={onClose} style={StyleSheet.absoluteFillObject} />
-        {date ? (
-          <View
-            style={[
-              styles.daySheet,
-              {
-                paddingBottom: insets.bottom + 20,
-                backgroundColor: colors.surface,
-                borderColor: colors.border,
-                borderTopLeftRadius: radius.xl,
-                borderTopRightRadius: radius.xl,
-              },
+    <Overlay visible={date !== null} onClose={close} align="bottom">
+      {date ? (
+        <View
+          style={[
+            styles.daySheet,
+            {
+              paddingBottom: insets.bottom + 20,
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              borderTopLeftRadius: radius.xl,
+              borderTopRightRadius: radius.xl,
+            },
+          ]}
+        >
+          <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
+          <View style={styles.sheetHeader}>
+            <View style={styles.sheetHeaderCopy}>
+              <Text style={[styles.sheetDate, typography.title, { color: colors.text }]}>{formatDate(date)}</Text>
+              <View style={styles.sheetStatusRow}>
+                <View style={[styles.sheetStatusDot, { backgroundColor: holiday ? colors.catHealth : weekend ? colors.textMuted : colors.success }]} />
+                <Text style={[typography.caption, { color: colors.textMuted }]}>{getDayStatus(date, holiday, weekend)}</Text>
+              </View>
+            </View>
+            <MotionPressable
+              accessibilityRole="button"
+              accessibilityLabel="Закрыть"
+              onPress={close}
+              style={[styles.closeButton, { backgroundColor: colors.surfaceElevated }]}
+            >
+              <LucideIcon name="x" size={20} color={colors.textSecondary} />
+            </MotionPressable>
+          </View>
+          <View style={[styles.dayTotal, { backgroundColor: colors.accentSoft }]}>
+            <View>
+              <Text style={[typography.caption, { color: colors.textMuted }]}>За этот день</Text>
+              <Text style={[styles.dayXp, typography.numericDisplay, { color: colors.accent }]}>{activity.xp} XP</Text>
+            </View>
+            <View style={styles.dayCount}>
+              <LucideIcon name="list-checks" size={21} color={colors.accent} />
+              <Text style={[typography.bodyStrong, { color: colors.text }]}>{activity.completions.length}</Text>
+            </View>
+          </View>
+          {undoError ? (
+            <View style={[styles.undoError, { backgroundColor: colors.dangerSoft, borderColor: colors.danger }]}>
+              <LucideIcon name="circle-alert" size={17} color={colors.danger} />
+              <Text style={[typography.caption, { color: colors.danger, flex: 1 }]}>{undoError}</Text>
+            </View>
+          ) : null}
+          <FlatList
+            data={activity.completions}
+            keyExtractor={item => item.id}
+            bounces={false}
+            showsVerticalScrollIndicator={false}
+            initialNumToRender={10}
+            style={styles.dayList}
+            contentContainerStyle={[
+              styles.dayListContent,
+              activity.completions.length === 0 && styles.dayListEmpty,
             ]}
-          >
-            <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
-            <View style={styles.sheetHeader}>
-              <View style={styles.sheetHeaderCopy}>
-                <Text style={[styles.sheetDate, typography.title, { color: colors.text }]}>{formatDate(date)}</Text>
-                <View style={styles.sheetStatusRow}>
-                  <View style={[styles.sheetStatusDot, { backgroundColor: holiday ? colors.catHealth : weekend ? colors.textMuted : colors.success }]} />
-                  <Text style={[typography.caption, { color: colors.textMuted }]}>{getDayStatus(date, holiday, weekend)}</Text>
-                </View>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Закрыть"
-                onPress={onClose}
-                style={({ pressed }) => [styles.closeButton, { backgroundColor: colors.surfaceElevated, opacity: pressed ? 0.7 : 1 }]}
-              >
-                <LucideIcon name="x" size={20} color={colors.textSecondary} />
-              </Pressable>
-            </View>
-            <View style={[styles.dayTotal, { backgroundColor: colors.accentSoft }]}>
-              <View>
-                <Text style={[typography.caption, { color: colors.textMuted }]}>За этот день</Text>
-                <Text style={[styles.dayXp, typography.numericDisplay, { color: colors.accent }]}>{activity.xp} XP</Text>
-              </View>
-              <View style={styles.dayCount}>
-                <LucideIcon name="list-checks" size={21} color={colors.accent} />
-                <Text style={[typography.bodyStrong, { color: colors.text }]}>{activity.completions.length}</Text>
-              </View>
-            </View>
-            <FlatList
-              data={activity.completions}
-              keyExtractor={item => item.id}
-              bounces={false}
-              showsVerticalScrollIndicator={false}
-              initialNumToRender={10}
-              contentContainerStyle={[styles.dayList, activity.completions.length === 0 && styles.dayListEmpty]}
-              renderItem={({ item }) => {
-                const categoryColor = colors[`cat${item.category.charAt(0).toUpperCase()}${item.category.slice(1)}` as keyof typeof colors];
-                return (
-                  <View
-                    style={[
-                      styles.questRow,
-                      { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, borderRadius: radius.md },
-                    ]}
+            renderItem={({ item }) => {
+              const categoryColor = colors[`cat${item.category.charAt(0).toUpperCase()}${item.category.slice(1)}` as keyof typeof colors];
+              const expanded = expandedCompletionId === item.id;
+              const undoing = undoingId === item.id;
+              return (
+                <View
+                  style={[
+                    styles.questRow,
+                    { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, borderRadius: radius.md },
+                  ]}
+                >
+                  <MotionPressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${item.title}, ${item.xp} XP`}
+                    accessibilityHint="Показать отмену выполнения"
+                    accessibilityState={{ expanded }}
+                    disabled={Boolean(undoingId)}
+                    onPress={() => setExpandedCompletionId(current => current === item.id ? null : item.id)}
+                    style={[styles.questMain, { opacity: Boolean(undoingId) ? 0.6 : 1 }]}
                   >
                     <View style={[styles.questIcon, { backgroundColor: `${categoryColor}20` }]}>
                       <LucideIcon name="check" size={17} color={categoryColor} />
@@ -417,23 +596,67 @@ function DayModal({ date, activity, onClose }: { date: Date | null; activity: Ac
                       <Text style={[typography.caption, { color: colors.textMuted }]}>{item.time} · {CATEGORY_LABELS[item.category]}</Text>
                     </View>
                     <Text style={[typography.numericSmall, { color: colors.accent }]}>+{item.xp}</Text>
-                  </View>
-                );
-              }}
-              ListEmptyComponent={
-                <View style={styles.emptyDay}>
-                  <View style={[styles.emptyIcon, { backgroundColor: colors.surfaceElevated }]}>
-                    <LucideIcon name="moon" size={28} color={colors.textMuted} />
-                  </View>
-                  <Text style={[typography.bodyStrong, { color: colors.text }]}>В этот день квестов не было</Text>
-                  <Text style={[typography.caption, { color: colors.textMuted, textAlign: 'center' }]}>Можно начать новую серию прямо сейчас</Text>
+                  </MotionPressable>
+                  {expanded ? (
+                    <MotionPressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Отменить выполнение: ${item.title}`}
+                      disabled={Boolean(undoingId)}
+                      onPress={() => confirmUndo(item)}
+                      style={[
+                        styles.undoButton,
+                        {
+                          backgroundColor: colors.dangerSoft,
+                          borderLeftColor: colors.borderSubtle,
+                          opacity: undoing ? 0.6 : 1,
+                        },
+                      ]}
+                    >
+                      {undoing ? (
+                        <ActivityIndicator size="small" color={colors.danger} />
+                      ) : (
+                        <LucideIcon name="undo-2" size={20} color={colors.danger} />
+                      )}
+                    </MotionPressable>
+                  ) : null}
                 </View>
-              }
-            />
-          </View>
-        ) : null}
-      </View>
-    </Modal>
+              );
+            }}
+            ListEmptyComponent={
+              <View style={styles.emptyDay}>
+                <View style={[styles.emptyIcon, { backgroundColor: colors.surfaceElevated }]}>
+                  <LucideIcon name="moon" size={28} color={colors.textMuted} />
+                </View>
+                <Text style={[typography.bodyStrong, { color: colors.text }]}>В этот день квестов не было</Text>
+                <Text style={[typography.caption, { color: colors.textMuted, textAlign: 'center' }]}>Можно начать новую серию прямо сейчас</Text>
+              </View>
+            }
+          />
+        </View>
+      ) : null}
+    </Overlay>
+  );
+}
+
+function CompletionMark({ color }: { color: string }) {
+  const progress = useSharedValue(0);
+  const reduced = useReducedMotion();
+
+  useEffect(() => {
+    progress.value = reduced
+      ? withTiming(1, { duration: duration.reducedMotion })
+      : withSpring(1, spring.card);
+  }, [progress, reduced]);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: progress.value,
+    transform: reduced ? [] : [{ scale: 0.65 + progress.value * 0.35 }],
+  }));
+
+  return (
+    <Animated.View style={[styles.completionMark, { borderColor: color }, style]}>
+      <View style={[styles.activityDot, { backgroundColor: color }]} />
+    </Animated.View>
   );
 }
 
@@ -484,7 +707,6 @@ const styles = StyleSheet.create({
   heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 28, lineHeight: 34 },
   subtitle: { marginTop: 2 },
-  todayBadge: { minHeight: 38, borderRadius: 19, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 },
   metricsRow: { flexDirection: 'row', gap: 8 },
   metric: { flex: 1, minHeight: 92, borderWidth: 1, borderRadius: 17, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
   metricValue: { fontSize: 24, lineHeight: 30 },
@@ -495,10 +717,12 @@ const styles = StyleSheet.create({
   monthTitle: { fontSize: 16, lineHeight: 21 },
   weekRow: { flexDirection: 'row', marginBottom: 5 },
   weekday: { width: '14.2857%', textAlign: 'center', fontSize: 10, lineHeight: 14, fontWeight: '800' },
-  grid: { flexDirection: 'row', flexWrap: 'wrap' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', position: 'relative' },
+  selectionRing: { position: 'absolute', top: 0, left: 0, borderWidth: 1.5, borderRadius: 12, zIndex: 3 },
+  completionMark: { position: 'absolute', bottom: 2, width: 12, height: 12, borderRadius: 6, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   dayCell: { width: '14.2857%', aspectRatio: 1, borderRadius: 12, marginBottom: 3, alignItems: 'center', justifyContent: 'center' },
   dayNumber: { fontSize: 11, lineHeight: 15 },
-  activityDot: { position: 'absolute', bottom: 5, width: 4, height: 4, borderRadius: 2 },
+  activityDot: { width: 4, height: 4, borderRadius: 2 },
   holidayDot: { position: 'absolute', top: 5, right: 5, width: 3, height: 3, borderRadius: 2 },
   legend: { borderTopWidth: StyleSheet.hairlineWidth, marginTop: 9, paddingTop: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
@@ -511,8 +735,7 @@ const styles = StyleSheet.create({
   recentDate: { width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   recentCopy: { flex: 1, minWidth: 0 },
   emptyRecent: { minHeight: 170, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 7 },
-  modalRoot: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.62)' },
-  daySheet: { maxHeight: '82%', borderWidth: 1, borderBottomWidth: 0, paddingHorizontal: 18, paddingTop: 10 },
+  daySheet: { width: '100%', height: '82%', flexShrink: 1, borderWidth: 1, borderBottomWidth: 0, paddingHorizontal: 18, paddingTop: 10 },
   sheetHandle: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 14 },
   sheetHeader: { flexDirection: 'row', alignItems: 'flex-start' },
   sheetHeaderCopy: { flex: 1 },
@@ -523,9 +746,13 @@ const styles = StyleSheet.create({
   dayTotal: { minHeight: 72, borderRadius: 16, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 },
   dayXp: { fontSize: 27, lineHeight: 33, marginTop: 1 },
   dayCount: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  dayList: { paddingTop: 12, paddingBottom: 8, gap: 8 },
+  undoError: { minHeight: 42, borderWidth: 1, borderRadius: 13, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
+  dayList: { flex: 1, minHeight: 0 },
+  dayListContent: { paddingTop: 12, paddingBottom: 8, gap: 8 },
   dayListEmpty: { flexGrow: 1 },
-  questRow: { minHeight: 68, borderWidth: 1, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  questRow: { minHeight: 68, borderWidth: 1, flexDirection: 'row', alignItems: 'stretch', overflow: 'hidden' },
+  questMain: { flex: 1, minWidth: 0, minHeight: 68, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  undoButton: { width: 50, alignItems: 'center', justifyContent: 'center', borderLeftWidth: 1 },
   questIcon: { width: 36, height: 36, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   questCopy: { flex: 1, minWidth: 0 },
   emptyDay: { minHeight: 220, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 7 },

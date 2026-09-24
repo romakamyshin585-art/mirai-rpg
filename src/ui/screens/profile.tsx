@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
 import type { CharacterRow, StatRow } from '../../repos/character_repo';
@@ -9,6 +10,11 @@ import { levelProgress } from '../../domain/level';
 import { BOTTOM_NAV_BASE_HEIGHT, CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
 import { RadarChart, type RadarData } from '../components/RadarChart';
+import { MotionPressable } from '../components/MotionPressable';
+import { MotionNumber } from '../components/MotionNumber';
+import { MotionProgressBar } from '../components/MotionProgressBar';
+import { MotionReveal } from '../components/MotionReveal';
+import { useScrollHeader } from '../motion';
 
 const CATEGORY_ICONS: Record<Category, string> = {
   health: 'heart-pulse',
@@ -43,6 +49,7 @@ type ProfileScreenProps = {
 export function ProfileScreen({ ctx, revision, onOpenAchievements }: ProfileScreenProps) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const insets = useSafeAreaInsets();
+  const { onScroll: onHeaderScroll, style: headerStyle } = useScrollHeader();
   const [character, setCharacter] = useState<CharacterRow | null>(null);
   const [stats, setStats] = useState<StatRow[]>([]);
   const [personalBests, setPersonalBests] = useState<Array<{ scope: string; value: number; achieved_at: string }>>([]);
@@ -103,13 +110,13 @@ export function ProfileScreen({ ctx, revision, onOpenAchievements }: ProfileScre
         <LucideIcon name="user-round-x" size={40} color={colors.danger} />
         <Text style={[styles.errorTitle, { color: colors.text }]}>Профиль не загрузился</Text>
         <Text style={[styles.errorText, { color: colors.textMuted }]}>{error ?? 'Попробуй ещё раз'}</Text>
-        <Pressable
+        <MotionPressable
           accessibilityRole="button"
           onPress={() => void reload()}
-          style={({ pressed }) => [styles.retry, { backgroundColor: colors.accent, opacity: pressed ? 0.8 : 1 }]}
+          style={[styles.retry, { backgroundColor: colors.accent }]}
         >
           <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Повторить</Text>
-        </Pressable>
+        </MotionPressable>
       </View>
     );
   }
@@ -129,7 +136,9 @@ export function ProfileScreen({ ctx, revision, onOpenAchievements }: ProfileScre
   const achievementProgress = totalAchievements > 0 ? Math.round((unlocked / totalAchievements) * 100) : 0;
 
   return (
-    <ScrollView
+    <Animated.ScrollView
+      onScroll={onHeaderScroll}
+      scrollEventThrottle={16}
       style={[styles.scroll, { backgroundColor: colors.bg }]}
       contentContainerStyle={[
         styles.content,
@@ -146,18 +155,21 @@ export function ProfileScreen({ ctx, revision, onOpenAchievements }: ProfileScre
         />
       }
     >
-      <View style={styles.heading}>
-        <View>
-          <Text style={[styles.title, typography.title, { color: colors.text }]}>Профиль</Text>
-          <Text style={[styles.subtitle, typography.caption, { color: colors.textMuted }]}>Твоя история, способности и прогресс</Text>
+      <MotionReveal index={0} style={headerStyle}>
+        <View style={styles.heading}>
+          <View>
+            <Text style={[styles.title, typography.title, { color: colors.text }]}>Профиль</Text>
+            <Text style={[styles.subtitle, typography.caption, { color: colors.textMuted }]}>Твоя история, способности и прогресс</Text>
+          </View>
+          <View style={[styles.status, { backgroundColor: colors.successSoft }]}>
+            <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
+            <Text style={[typography.caption, { color: colors.success, fontWeight: '800' }]}>В пути</Text>
+          </View>
         </View>
-        <View style={[styles.status, { backgroundColor: colors.successSoft }]}>
-          <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
-          <Text style={[typography.caption, { color: colors.success, fontWeight: '800' }]}>В пути</Text>
-        </View>
-      </View>
+      </MotionReveal>
 
-      <View style={[styles.hero, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, borderRadius: radius.xl }]}>
+      <MotionReveal index={1}>
+        <View style={[styles.hero, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, borderRadius: radius.xl }]}>
         <View style={[styles.heroGlow, { backgroundColor: `${colors.catDiscipline}20` }]} />
         <View style={styles.heroTop}>
           <View style={styles.avatarWrap}>
@@ -165,7 +177,7 @@ export function ProfileScreen({ ctx, revision, onOpenAchievements }: ProfileScre
               <LucideIcon name="user-round" size={44} color={colors.accent} />
             </View>
             <View style={[styles.levelBubble, { backgroundColor: colors.accent, borderColor: colors.bg }]}>
-              <Text style={[styles.levelBubbleText, { color: colors.textInverse }]}>{character.level}</Text>
+              <MotionNumber key={`profile-level-${character.level}`} value={character.level} style={[styles.levelBubbleText, { color: colors.textInverse }]} />
             </View>
           </View>
           <View style={styles.heroCopy}>
@@ -184,12 +196,19 @@ export function ProfileScreen({ ctx, revision, onOpenAchievements }: ProfileScre
           <Text style={[typography.caption, { color: colors.textMuted }]}>{progress.xp_into_level} / {progress.xp_for_next_level} XP</Text>
           <Text style={[typography.caption, { color: colors.accent, fontWeight: '800' }]}>{progress.level_progress_pct}% до Lv.{character.level + 1}</Text>
         </View>
-        <View style={[styles.xpTrack, { backgroundColor: colors.surfaceFloating }]}>
-          <View style={[styles.xpFill, { width: `${progress.level_progress_pct}%`, backgroundColor: colors.accent }]} />
+        <MotionProgressBar
+          value={progress.level_progress_pct / 100}
+          trackColor={colors.surfaceFloating}
+          fillColor={colors.accent}
+          height={7}
+          style={styles.xpTrack}
+          accessibilityLabel="Прогресс уровня"
+        />
         </View>
-      </View>
+      </MotionReveal>
 
-      <View style={[styles.radarCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+      <MotionReveal index={2}>
+        <View style={[styles.radarCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
         <View style={styles.sectionHeader}>
           <View>
             <Text style={[styles.sectionTitle, typography.bodyStrong, { color: colors.text }]}>Характеристики</Text>
@@ -197,16 +216,18 @@ export function ProfileScreen({ ctx, revision, onOpenAchievements }: ProfileScre
           </View>
           <LucideIcon name="radar" size={22} color={colors.catDiscipline} />
         </View>
-        <RadarChart data={radarData} interactive />
-      </View>
-
-      <View style={styles.sectionHeader}>
-        <View>
-          <Text style={[styles.sectionTitle, typography.bodyStrong, { color: colors.text }]}>Категории</Text>
-          <Text style={[styles.sectionHint, typography.caption, { color: colors.textMuted }]}>Всего выполнено и заработано</Text>
+        <RadarChart data={radarData} />
         </View>
-      </View>
-      <View style={styles.categoryGrid}>
+      </MotionReveal>
+
+      <MotionReveal index={3}>
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={[styles.sectionTitle, typography.bodyStrong, { color: colors.text }]}>Категории</Text>
+            <Text style={[styles.sectionHint, typography.caption, { color: colors.textMuted }]}>Всего выполнено и заработано</Text>
+          </View>
+        </View>
+        <View style={styles.categoryGrid}>
         {CATEGORIES.map(category => {
           const stat = stats.find(item => item.category === category);
           const categoryColor = colors[`cat${category.charAt(0).toUpperCase()}${category.slice(1)}` as keyof typeof colors];
@@ -224,31 +245,40 @@ export function ProfileScreen({ ctx, revision, onOpenAchievements }: ProfileScre
             </View>
           );
         })}
-      </View>
+        </View>
+      </MotionReveal>
 
-      <Pressable
-        accessibilityRole="button"
-        onPress={onOpenAchievements}
-        style={({ pressed }) => [styles.achievementCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, opacity: pressed ? 0.85 : 1 }]}
-      >
+      <MotionReveal index={4}>
+        <MotionPressable
+          accessibilityRole="button"
+          onPress={onOpenAchievements}
+          style={[styles.achievementCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+        >
         <View style={[styles.achievementIcon, { backgroundColor: colors.accentSoft }]}>
           <LucideIcon name="trophy" size={25} color={colors.accent} />
         </View>
         <View style={styles.achievementCopy}>
           <Text style={[typography.bodyStrong, { color: colors.text }]}>Достижения</Text>
           <Text style={[typography.caption, { color: colors.textMuted }]}>{unlocked} из {totalAchievements} открыто</Text>
-          <View style={[styles.achievementTrack, { backgroundColor: colors.surfaceFloating }]}>
-            <View style={[styles.achievementFill, { width: `${achievementProgress}%`, backgroundColor: colors.accent }]} />
-          </View>
+          <MotionProgressBar
+            value={achievementProgress / 100}
+            trackColor={colors.surfaceFloating}
+            fillColor={colors.accent}
+            height={5}
+            style={styles.achievementTrack}
+            accessibilityLabel="Прогресс достижений"
+          />
         </View>
         <View style={styles.achievementValue}>
           <Text style={[typography.numeric, { color: colors.accent }]}>{achievementProgress}%</Text>
           <LucideIcon name="chevron-right" size={18} color={colors.textMuted} />
         </View>
-      </Pressable>
+        </MotionPressable>
+      </MotionReveal>
 
       {personalBests.length > 0 ? (
-        <View>
+        <MotionReveal index={5}>
+          <View>
           <View style={styles.sectionHeader}>
             <View>
               <Text style={[styles.sectionTitle, typography.bodyStrong, { color: colors.text }]}>Рекорды</Text>
@@ -271,11 +301,13 @@ export function ProfileScreen({ ctx, revision, onOpenAchievements }: ProfileScre
               </View>
             ))}
           </View>
-        </View>
+          </View>
+        </MotionReveal>
       ) : null}
 
       {recentActivity.length > 0 ? (
-        <View>
+        <MotionReveal index={5}>
+          <View>
           <View style={styles.sectionHeader}>
             <View>
               <Text style={[styles.sectionTitle, typography.bodyStrong, { color: colors.text }]}>Недавняя активность</Text>
@@ -296,9 +328,10 @@ export function ProfileScreen({ ctx, revision, onOpenAchievements }: ProfileScre
               </View>
             ))}
           </View>
-        </View>
-      ) : null}
-    </ScrollView>
+           </View>
+         </MotionReveal>
+       ) : null}
+     </Animated.ScrollView>
   );
 }
 

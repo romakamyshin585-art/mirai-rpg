@@ -436,4 +436,55 @@ describe('AchievementService', () => {
     expect(pbs.filter((item) => item.scope === 'day')).toHaveLength(1);
     expect(pbs.find((item) => item.scope === 'day')?.value).toBe(5);
   });
+
+  test('undoQuestCompletion removes an older occurrence by completion id', async () => {
+    const { user, db, char } = await setup();
+    const qRepo = new QuestRepo(db);
+    const prog = new ProgressionService(db);
+    const health = await qRepo.insert({
+      user_id: null, title: 'Old health', description: null, category: 'health',
+      difficulty: 1, xp_reward: 100, is_system: 1, is_active: 1,
+    });
+    const knowledge = await qRepo.insert({
+      user_id: null, title: 'Later knowledge', description: null, category: 'knowledge',
+      difficulty: 1, xp_reward: 50, is_system: 1, is_active: 1,
+    });
+    const first = await prog.completeQuest(user.id, health.id);
+    const second = await prog.completeQuest(user.id, knowledge.id);
+
+    const undone = await prog.undoQuestCompletion(user.id, first.completionId);
+    expect(undone.success).toBe(true);
+    expect(undone.questId).toBe(health.id);
+    expect(undone.totalXp).toBe(50);
+
+    const character = await new CharacterService(db).get(user.id);
+    const healthStat = await new StatRepo(db).get(char.id, 'health');
+    const knowledgeStat = await new StatRepo(db).get(char.id, 'knowledge');
+    expect(character?.xp).toBe(50);
+    expect(character?.class).toBe('scholar');
+    expect(healthStat?.value).toBe(0);
+    expect(knowledgeStat?.value).toBe(1);
+    expect(await new CompletionRepo(db).getById(first.completionId)).toBeNull();
+    expect(await new CompletionRepo(db).getById(second.completionId)).toBeTruthy();
+  });
+
+  test('syncFromHistory removes achievements that are no longer earned', async () => {
+    const { user, db } = await setup();
+    await seedCatalog(db);
+    const qRepo = new QuestRepo(db);
+    const prog = new ProgressionService(db);
+    const q = await qRepo.insert({
+      user_id: null, title: 'Only completion', description: null, category: 'health',
+      difficulty: 1, xp_reward: 20, is_system: 1, is_active: 1,
+    });
+    const completion = await prog.completeQuest(user.id, q.id);
+    const achievements = new AchievementService(db);
+    await achievements.syncFromHistory(user.id);
+    expect((await achievements.listUnlocked(user.id)).some(item => item.code === 'first_step')).toBe(true);
+
+    await prog.undoQuestCompletion(user.id, completion.completionId);
+    await achievements.syncFromHistory(user.id);
+    expect(await achievements.listUnlocked(user.id)).toHaveLength(0);
+    expect(await achievements.listPersonalBests(user.id)).toHaveLength(0);
+  });
 });

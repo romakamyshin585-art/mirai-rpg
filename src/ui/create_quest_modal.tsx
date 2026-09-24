@@ -10,8 +10,9 @@
  */
 
 import { useState } from 'react';
-import { Modal, View, TextInput, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { H2, Muted, Button, Pill, Text } from './components';
+import { Overlay } from './components/Overlay';
 import { COLORS, CATEGORY_COLORS, CATEGORY_LABELS, FONT, RADIUS, SPACING } from './theme';
 import { CATEGORIES, type Category } from '../domain/category';
 
@@ -74,14 +75,13 @@ export function CreateQuestModal({
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable onPress={onClose} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' }}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1, justifyContent: 'flex-end' }}
-          pointerEvents="box-none"
-        >
-          <Pressable onPress={() => {}} style={{ backgroundColor: COLORS.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: SPACING.lg, maxHeight: '90%' }}>
+    <Overlay visible={visible} onClose={onClose} align="bottom">
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ width: '100%', justifyContent: 'flex-end' }}
+        pointerEvents="box-none"
+      >
+        <View style={{ backgroundColor: COLORS.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: SPACING.lg, maxHeight: '90%' }}>
             <View style={{ alignItems: 'center', marginBottom: SPACING.md }}>
               <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border }} />
             </View>
@@ -153,10 +153,9 @@ export function CreateQuestModal({
               <Button title="Отмена" onPress={onClose} variant="ghost" />
               <View style={{ height: SPACING.lg }} />
             </ScrollView>
-          </Pressable>
-        </KeyboardAvoidingView>
-      </Pressable>
-    </Modal>
+        </View>
+      </KeyboardAvoidingView>
+    </Overlay>
   );
 }
 

@@ -10,6 +10,7 @@ import { SPACING } from '../theme';
 import { CATEGORY_COLORS } from '../theme';
 import { CATEGORY_LABELS } from '../theme';
 import { LucideIcon } from '../components';
+import { duration, scale, spring, useReducedMotion } from '../motion';
 
 interface NextQuestRowProps {
   quest: {
@@ -30,7 +31,8 @@ const DIFFICULTY_LABELS: Record<1 | 2 | 3, string> = {
 };
 
 export function NextQuestRow({ quest, onPress }: NextQuestRowProps) {
-  const { colors, motion } = useTheme();
+  const { colors } = useTheme();
+  const reduced = useReducedMotion();
   const { numeric, caption, body, bodyStrong } = useTheme().typographyStylesheet;
   
   const entranceProgress = useSharedValue(0);
@@ -38,17 +40,19 @@ export function NextQuestRow({ quest, onPress }: NextQuestRowProps) {
 
   React.useEffect(() => {
     if (quest) {
-      entranceProgress.value = withSpring(1, { damping: 22, stiffness: 180 });
+      entranceProgress.value = reduced
+        ? withTiming(1, { duration: duration.reducedMotion })
+        : withSpring(1, spring.card);
     }
-  }, [quest]);
+  }, [entranceProgress, quest, reduced]);
 
   const containerStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(entranceProgress.value, { duration: motion.durations.normal }),
-    transform: [{ translateY: interpolate(entranceProgress.value, [0, 1], [16, 0], Extrapolate.CLAMP) }],
+    opacity: entranceProgress.value,
+    transform: reduced ? [] : [{ translateY: interpolate(entranceProgress.value, [0, 1], [16, 0], Extrapolate.CLAMP) }],
   }));
 
   const pressStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: interpolate(pressProgress.value, [0, 1], [1, 0.98], Extrapolate.CLAMP) }],
+    transform: reduced ? [] : [{ scale: interpolate(pressProgress.value, [0, 1], [1, scale.cardPress], Extrapolate.CLAMP) }],
   }));
 
   if (!quest) {
@@ -68,8 +72,8 @@ export function NextQuestRow({ quest, onPress }: NextQuestRowProps) {
     <Animated.View style={[styles.container, containerStyle]}>
       <Pressable
         onPress={onPress}
-        onPressIn={() => pressProgress.value = withSpring(1, { damping: 20, stiffness: 300 })}
-        onPressOut={() => pressProgress.value = withSpring(0, { damping: 20, stiffness: 300 })}
+        onPressIn={() => { if (!reduced) pressProgress.value = withSpring(1, spring.press); }}
+        onPressOut={() => { if (!reduced) pressProgress.value = withSpring(0, spring.press); }}
         style={[{ backgroundColor: '#23262E' }, pressStyle]}
         android_ripple={{ color: catColor + '40' }}
       >
