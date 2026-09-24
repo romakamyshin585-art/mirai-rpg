@@ -1,13 +1,9 @@
-/**
- * App root. Single-user: no auth flow, no login screen. After init,
- * goes straight to the five-tab main UI.
- */
-
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { SafeAreaView, View, Pressable, Text, ActivityIndicator, StatusBar, Platform, StyleSheet } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { View, Pressable, Text, ActivityIndicator, StatusBar, Platform, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, withSpring, withTiming, useAnimatedStyle, interpolate } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppContext } from './app_context';
 import { QuestsScreen } from './screens/quests';
 import { ProfileScreen } from './screens/profile';
@@ -15,145 +11,152 @@ import { AchievementsScreen } from './screens/achievements';
 import { CalendarScreen } from './screens/calendar';
 import { HomeScreen } from './screens/home';
 import { Toast } from './toast';
-import { ThemeProvider, useTheme } from './theme';
+import { BOTTOM_NAV_BASE_HEIGHT, ThemeProvider, useTheme } from './theme';
 import { useNunitoFonts } from './fonts';
 import { LucideIcon } from './components';
-import { usePressAnimation, useHaptics, HAPTIC_EVENTS } from './motion';
+import { HAPTIC_EVENTS, useHaptics, usePressAnimation } from './motion';
 
 type Tab = 'home' | 'quests' | 'calendar' | 'achievements' | 'profile';
 
+type ToastState = {
+  message: string;
+  actionLabel?: string;
+  onAction?: () => Promise<void> | void;
+};
+
 function AppContent() {
+  const insets = useSafeAreaInsets();
   const [ctx, setCtx] = useState<AppContext | null>(null);
   const [tab, setTab] = useState<Tab>('home');
-  const [toast, setToast] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
-  const [initStage, setInitStage] = useState<string>('starting');
+  const [initStage, setInitStage] = useState('starting');
   const [retryCount, setRetryCount] = useState(0);
   const { colors } = useTheme();
   const [fontsLoaded, fontError] = useNunitoFonts();
-  const [fontsReady, setFontsReady] = useState(false);
-  const fontTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (fontsLoaded || fontError) setFontsReady(true);
-  }, [fontsLoaded, fontError]);
+    if (fontsLoaded) console.log('[MiraiRPG] Fonts ready');
+    if (fontError) console.warn('[MiraiRPG] Font fallback:', fontError);
+  }, [fontError, fontsLoaded]);
 
-  const handleInitError = useCallback((error: Error, stage: string) => {
-    const msg = `${stage}: ${error?.message || String(error)}`;
-    console.error('[MiraiRPG] Init failed:', msg);
-    setInitError(msg);
-    setInitStage('error');
+  useEffect(() => {
+    let cancelled = false;
+    let stage = 'starting';
+
+    const initialize = async () => {
+      try {
+        stage = 'opening-db';
+        setInitStage(stage);
+        const context = await AppContext.init();
+        if (cancelled) return;
+        stage = 'complete';
+        setInitStage(stage);
+        setCtx(context);
+      } catch (error) {
+        if (cancelled) return;
+        const value = error instanceof Error ? error : new Error(String(error));
+        console.error('[MiraiRPG] Init failed:', value);
+        setInitError(`${stage}: ${value.message}`);
+        setInitStage('error');
+      }
+    };
+
+    void initialize();
+    return () => {
+      cancelled = true;
+    };
+  }, [retryCount]);
+
+  const markDataChanged = useCallback(() => {
+    setRevision(value => value + 1);
   }, []);
 
-  useEffect(() => {
-    // Font loading timeout fallback (10 seconds)
-    fontTimeoutRef.current = setTimeout(() => {
-  if (!fontsReady) {
-        console.warn('[MiraiRPG] Font loading timeout, proceeding with fallback');
-        setFontsReady(true);
-      }
-    }, 8000);
-
-    let cancelled = false;
-    (async () => {
-      try {
-        setInitStage('opening-db');
-        console.log('[MiraiRPG] Opening database...');
-        const c = await AppContext.init();
-        if (cancelled) return;
-        setInitStage('db-ready');
-        console.log('[MiraiRPG] Database ready, creating character...');
-        setCtx(c);
-        setInitStage('complete');
-      } catch (e: any) {
-        if (!cancelled) handleInitError(e, initStage);
-      }
-    })();
-    return () => { 
-      cancelled = true; 
-      if (fontTimeoutRef.current) clearTimeout(fontTimeoutRef.current);
-    };
-  }, [fontsLoaded, handleInitError, retryCount]);
-
-  // Allow proceeding even if fonts fail to load (show warning but don't block)
-  if (!fontsLoaded) {
-    return (
-      <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-        <ActivityIndicator color={colors.accent} size="large" />
-        <Text style={{ color: colors.textMuted, marginTop: 16, fontSize: 13, textAlign: 'center' }}>
-          Загрузка шрифтов...{fontError ? `\n${fontError instanceof Error ? fontError.message : String(fontError)}` : ''}
-        </Text>
-      </View>
-    );
-  }
+  const hideToast = useCallback(() => {
+    setToast(null);
+  }, []);
 
   if (initError) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-        <Text style={{ color: colors.danger, fontSize: 18, marginBottom: 12, textAlign: 'center' }}>Ошибка инициализации</Text>
-        <Text style={{ color: colors.text, fontSize: 13, textAlign: 'center', marginBottom: 24 }}>{initError}</Text>
-        <Text style={{ color: colors.textMuted, fontSize: 11, textAlign: 'center', marginBottom: 16 }}>
-          Этап: {initStage}
-        </Text>
+      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
+        <Text style={[styles.errorTitle, { color: colors.danger }]}>Ошибка инициализации</Text>
+        <Text style={[styles.errorText, { color: colors.text }]}>{initError}</Text>
+        <Text style={[styles.stageText, { color: colors.textMuted }]}>Этап: {initStage}</Text>
         <Pressable
-          onPress={() => { 
-            setCtx(null);
-            setInitError(null); 
-            setInitStage('starting');
-            setRetryCount(c => c + 1);
-            // Reset singleton so init can restart fresh
+          accessibilityRole="button"
+          onPress={() => {
             AppContext.resetInstance();
+            setCtx(null);
+            setInitError(null);
+            setInitStage('starting');
+            setRetryCount(value => value + 1);
           }}
-          style={{ paddingVertical: 12, paddingHorizontal: 24, backgroundColor: colors.accent, borderRadius: 12 }}
+          style={({ pressed }) => [styles.retryButton, { backgroundColor: colors.accent, opacity: pressed ? 0.82 : 1 }]}
         >
-          <Text style={{ color: colors.bg, fontWeight: '600', fontSize: 14 }}>Повторить</Text>
+          <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Повторить</Text>
         </Pressable>
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (!ctx) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.bg, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+      <View style={[styles.centered, { backgroundColor: colors.bg }]}>
         <ActivityIndicator color={colors.accent} size="large" />
-        <Text style={{ color: colors.textMuted, marginTop: 16, fontSize: 13, textAlign: 'center' }}>
-          Инициализация... ({initStage})
-        </Text>
+        <Text style={[styles.loadingLabel, { color: colors.textMuted }]}>Инициализация… {initStage}</Text>
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View style={[styles.app, { backgroundColor: colors.bg }]}>
       <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
-      <View style={{ flex: 1 }}>
+      <View style={styles.screenHost}>
         {tab === 'home' ? (
-          <HomeScreen ctx={ctx} />
+          <HomeScreen ctx={ctx} revision={revision} onOpenQuests={() => setTab('quests')} />
         ) : tab === 'quests' ? (
-          <QuestsScreen ctx={ctx} onQuestCompleted={(names) => {
-            if (names.length > 0) setToast(`🏆 ${names.join(', ')}`);
-          }} />
+          <QuestsScreen
+            ctx={ctx}
+            revision={revision}
+            onDataChanged={markDataChanged}
+            onQuestCompleted={(notice) => {
+              setToast({
+                message: notice.message,
+                actionLabel: 'Отменить',
+                onAction: notice.undo,
+              });
+            }}
+          />
         ) : tab === 'calendar' ? (
-          <CalendarScreen ctx={ctx} />
+          <CalendarScreen ctx={ctx} revision={revision} />
         ) : tab === 'profile' ? (
-          <ProfileScreen ctx={ctx} />
+          <ProfileScreen ctx={ctx} revision={revision} onOpenAchievements={() => setTab('achievements')} />
         ) : (
-          <AchievementsScreen ctx={ctx} />
+          <AchievementsScreen ctx={ctx} revision={revision} />
         )}
-        <BottomTab tab={tab} setTab={setTab} />
-        <Toast message={toast} onHide={() => setToast(null)} />
+        <BottomTab tab={tab} onChange={setTab} />
+        <Toast
+          message={toast?.message ?? null}
+          actionLabel={toast?.actionLabel}
+          onAction={toast?.onAction}
+          onHide={hideToast}
+          bottomOffset={BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 12}
+        />
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
 export default function App() {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <ThemeProvider>
-        <AppContent />
-      </ThemeProvider>
-    </GestureHandlerRootView>
+    <SafeAreaProvider>
+      <GestureHandlerRootView style={styles.app}>
+        <ThemeProvider>
+          <AppContent />
+        </ThemeProvider>
+      </GestureHandlerRootView>
+    </SafeAreaProvider>
   );
 }
 
@@ -165,84 +168,104 @@ const TABS: Array<{ key: Tab; icon: string; label: string }> = [
   { key: 'profile', icon: 'user', label: 'Profile' },
 ];
 
-function BottomTab({
-  tab,
-  setTab,
-}: {
-  tab: Tab;
-  setTab: (t: Tab) => void;
-}) {
-  const { colors, spacing, motion } = useTheme();
+const INDICATOR_SIZE = 44;
+
+function BottomTab({ tab, onChange }: { tab: Tab; onChange: (tab: Tab) => void }) {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const { pressIn, pressOut, pressStyle } = usePressAnimation();
   const { trigger } = useHaptics();
+  const activeIndex = TABS.findIndex(item => item.key === tab);
+  const targetIndex = useSharedValue(activeIndex);
+  const [rowWidth, setRowWidth] = useState(0);
 
-  const targetIndex = useSharedValue(TABS.findIndex(t => t.key === tab));
+  useEffect(() => {
+    targetIndex.value = withSpring(activeIndex, { damping: 22, stiffness: 220 });
+  }, [activeIndex, targetIndex]);
 
-  const backgroundStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(1, { duration: motion.durations.normal }),
-  }), [motion.durations.normal]);
+  const indicatorStyle = useAnimatedStyle(() => {
+    const tabWidth = rowWidth / TABS.length;
+    const offset = tabWidth * targetIndex.value + (tabWidth - INDICATOR_SIZE) / 2;
+    return {
+      opacity: rowWidth > 0 ? 1 : 0,
+      transform: [{ translateX: offset }],
+    };
+  }, [rowWidth]);
 
-  const handlePress = (index: number) => {
-    trigger(HAPTIC_EVENTS.tabPress);
-    targetIndex.value = withSpring(index, { damping: 22, stiffness: 200 });
-    setTab(TABS[index].key);
+  const selectTab = (next: Tab, index: number) => {
+    void trigger(HAPTIC_EVENTS.tabPress);
+    targetIndex.value = withSpring(index, { damping: 22, stiffness: 220 });
+    onChange(next);
   };
 
-  // Derive active index for rendering
-  const activeIndex = useMemo(() => TABS.findIndex(t => t.key === tab), [tab]);
-
-  // Smooth indicator animation
-  const indicatorStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: interpolate(targetIndex.value, [0, 1, 2, 3, 4], [12, 84, 156, 228, 300]) }],
-  }));
-
   return (
-<Animated.View style={[styles.container, backgroundStyle]}>
-        {/* Reduced blur intensity for better Android performance */}
-        {Platform.OS === 'ios' ? (
-          <BlurView
-            style={StyleSheet.absoluteFillObject}
-            intensity={40}
-            tint="dark"
+    <Animated.View
+      style={[
+        styles.navContainer,
+        {
+          height: BOTTOM_NAV_BASE_HEIGHT + insets.bottom,
+          paddingBottom: insets.bottom,
+          backgroundColor: Platform.OS === 'ios' ? 'transparent' : colors.surfaceOverlay,
+          borderTopColor: colors.borderSubtle,
+        },
+      ]}
+    >
+      {Platform.OS === 'ios' ? <BlurView style={StyleSheet.absoluteFillObject} intensity={42} tint="dark" /> : null}
+      <View style={styles.navContent} pointerEvents="box-none">
+        <View
+          onLayout={event => setRowWidth(event.nativeEvent.layout.width)}
+          style={styles.navRow}
+        >
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.navIndicator,
+              {
+                width: INDICATOR_SIZE,
+                height: INDICATOR_SIZE,
+                borderRadius: INDICATOR_SIZE / 2,
+                backgroundColor: `${colors.accent}20`,
+                borderColor: `${colors.accent}45`,
+              },
+              indicatorStyle,
+            ]}
           />
-        ) : (
-          <View style={styles.backgroundFallback} pointerEvents="none" />
-        )}
-        <View style={styles.content} pointerEvents="box-none">
-        <View style={styles.indicatorWrapper}>
-          <Animated.View style={[styles.indicator, indicatorStyle]} />
-        </View>
-        <View style={styles.tabsRow}>
-          {TABS.map((t, index) => {
-            const isActive = activeIndex === index;
+          {TABS.map((item, index) => {
+            const active = index === activeIndex;
             return (
               <Pressable
-                key={t.key}
-                onPress={() => handlePress(index)}
+                key={item.key}
+                accessibilityRole="tab"
+                accessibilityLabel={item.label}
+                accessibilityState={{ selected: active }}
+                disabled={active}
+                onPress={() => selectTab(item.key, index)}
                 onPressIn={pressIn}
                 onPressOut={pressOut}
-                style={({ pressed }) => [
-                  styles.tabItem,
-                  { flex: 1, paddingVertical: spacing.md },
-                  pressed && { opacity: 0.8 },
-                ]}
-                hitSlop={{ top: 10, bottom: 24, left: 8, right: 8 }}
+                style={styles.navItem}
               >
-                <Animated.View style={pressStyle}>
-                  <View style={styles.iconWrapper}>
+                <Animated.View style={[styles.navItemContent, pressStyle]}>
+                  <View style={styles.navIcon}>
                     <LucideIcon
-                      name={t.icon}
-                      size={24}
-                      color={isActive ? colors.accent : colors.textMuted}
-                      strokeWidth={isActive ? 2.4 : 2}
+                      name={item.icon}
+                      size={21}
+                      color={active ? colors.accent : colors.textMuted}
+                      strokeWidth={active ? 2.4 : 2}
                     />
                   </View>
-                  <Text style={[
-                    styles.label,
-                    { fontSize: 11, marginTop: 4, fontWeight: isActive ? '600' : '500' },
-                    { color: isActive ? colors.accent : colors.textMuted },
-                  ]}>
-                    {t.label}
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.8}
+                    style={[
+                      styles.navLabel,
+                      {
+                        color: active ? colors.accent : colors.textMuted,
+                        fontWeight: active ? '700' : '500',
+                      },
+                    ]}
+                  >
+                    {item.label}
                   </Text>
                 </Animated.View>
               </Pressable>
@@ -255,62 +278,35 @@ function BottomTab({
 }
 
 const styles = StyleSheet.create({
-  container: {
+  app: { flex: 1 },
+  screenHost: { flex: 1 },
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  loadingLabel: { fontFamily: 'Nunito', fontSize: 13, marginTop: 14 },
+  errorTitle: { fontFamily: 'Nunito', fontSize: 20, fontWeight: '800', marginBottom: 12 },
+  errorText: { fontFamily: 'Nunito', fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  stageText: { fontFamily: 'Nunito', fontSize: 12, marginTop: 10, marginBottom: 20 },
+  retryButton: { minHeight: 48, paddingHorizontal: 24, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  retryLabel: { fontFamily: 'Nunito', fontSize: 15, fontWeight: '800' },
+  navContainer: {
     position: 'absolute',
-    bottom: 0,
     left: 0,
     right: 0,
-    height: 88,
+    bottom: 0,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
     overflow: 'hidden',
+    zIndex: 40,
+    elevation: 16,
   },
-  backgroundFallback: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(14, 15, 18, 0.85)',
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
-    paddingTop: 4,
-  },
-  indicatorWrapper: {
-    position: 'absolute',
-    top: 8,
-    left: 12,
-    right: 12,
-    height: 48,
-    pointerEvents: 'none',
-  },
-  indicator: {
-    position: 'absolute',
-    top: 0,
-    left: 60,
-    width: 60,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(245, 165, 36, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(245, 165, 36, 0.2)',
-  },
-  tabsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 56,
-  },
-  tabItem: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconWrapper: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  label: {
-    fontFamily: 'Nunito',
-  },
+  navContent: { flex: 1, paddingHorizontal: 8 },
+  navIndicator: { position: 'absolute', left: 0, top: 5, borderWidth: 1 },
+  navRow: { flex: 1, flexDirection: 'row', alignItems: 'center', position: 'relative' },
+  navItem: { flex: 1, height: '100%', alignItems: 'center', justifyContent: 'center' },
+  navItemContent: { width: '100%', height: 62, alignItems: 'center', justifyContent: 'center' },
+  navIcon: { width: 34, height: 32, alignItems: 'center', justifyContent: 'center' },
+  navLabel: { fontFamily: 'Nunito', fontSize: 10, lineHeight: 13, marginTop: 2 },
 });

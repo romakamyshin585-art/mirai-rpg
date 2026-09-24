@@ -1,202 +1,171 @@
-/**
- * FocusModeModal — Fullscreen modal for focused quest execution.
- * Optimized: removed duplicate useEffect, proper useAnimatedStyle, reduced re-renders.
- */
-
-import React from 'react';
-import { View, StyleSheet, Pressable } from 'react-native';
-import Animated, {
-  useSharedValue,
-  withSpring,
-  withTiming,
-  useAnimatedStyle,
-  Easing,
-  Extrapolate,
-  interpolate
-} from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
-import { Button } from '../components';
-import { Text } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { QuestRow } from '../../repos/quest_repo';
+import type { Category } from '../../domain/category';
+import { CATEGORY_LABELS, useTheme } from '../theme';
+import { LucideIcon } from '../components';
+import { HAPTIC_EVENTS, useHaptics } from '../motion';
 
-interface FocusModeModalProps {
+const CATEGORY_ICONS: Record<Category, string> = {
+  health: 'heart-pulse',
+  knowledge: 'book-open',
+  career: 'briefcase-business',
+  discipline: 'target',
+  social: 'users',
+};
+
+type FocusModeModalProps = {
   visible: boolean;
   quest: QuestRow | null;
   onClose: () => void;
-  onComplete: (quest: any) => void;
-  durationMs?: number;
-}
+  onComplete: (quest: QuestRow) => Promise<void>;
+};
 
-export function FocusModeModal({ visible, quest, onClose, onComplete, durationMs = 30000 }: FocusModeModalProps) {
-  const entranceProgress = useSharedValue(0);
-  const progressAnim = useSharedValue(0);
-  const pulseAnim = useSharedValue(0);
+export function FocusModeModal({ visible, quest, onClose, onComplete }: FocusModeModalProps) {
+  const { colors, radius, typographyStylesheet: typography } = useTheme();
+  const insets = useSafeAreaInsets();
+  const { trigger } = useHaptics();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  React.useEffect(() => {
-    if (!visible || !quest) return;
-    entranceProgress.value = withSpring(1, { damping: 22, stiffness: 180 });
-    progressAnim.value = withTiming(1, { duration: durationMs, easing: Easing.linear });
-    pulseAnim.value = withSpring(1, { damping: 10, stiffness: 100 });
+  useEffect(() => {
+    if (!visible) return;
+    setError(null);
+    setBusy(false);
+    void trigger(HAPTIC_EVENTS.modalOpen);
+  }, [visible]);
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-  }, [visible, quest, durationMs]);
+  if (!quest) return null;
 
-  const overlayStyle = useAnimatedStyle(() => ({
-    opacity: entranceProgress.value * 0.8,
-  }));
+  const categoryColor = colors[`cat${quest.category.charAt(0).toUpperCase()}${quest.category.slice(1)}` as keyof typeof colors];
+  const requestClose = () => {
+    if (!busy) onClose();
+  };
 
-  const modalStyle = useAnimatedStyle(() => ({
-    opacity: entranceProgress.value,
-    transform: [{ translateY: interpolate(entranceProgress.value, [0, 1], [50, 0], Extrapolate.CLAMP) }],
-  }));
-
-  const progressBarStyle = useAnimatedStyle(() => ({
-    transform: [{ scaleX: progressAnim.value }],
-  }));
-
-  const pulseStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: interpolate(pulseAnim.value, [0, 1], [1, 1.05]) }],
-    opacity: interpolate(pulseAnim.value, [0, 1], [0.3, 0]),
-  }));
-
-  if (!visible || !quest) return null;
+  const complete = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onComplete(quest);
+    } catch (value) {
+      setError(value instanceof Error ? value.message : String(value));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <Animated.View style={[styles.overlay, overlayStyle]} pointerEvents={visible ? 'auto' : 'none'}>
-      <Pressable onPress={onClose} style={styles.overlayTouch}>
-        <Animated.View style={[styles.modal, modalStyle]}>
-          <Animated.View style={[styles.pulseRing, pulseStyle]} />
-          <Animated.View style={[styles.pulseRing, pulseStyle]} />
-          
-          <View style={styles.header}>
-            <Pressable onPress={onClose} hitSlop={16} style={styles.closeButton}>
-              <Text style={{ color: '#6B707A', fontSize: 24, fontWeight: '300' }}>×</Text>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={requestClose}
+    >
+      <View style={[styles.root, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={requestClose} style={StyleSheet.absoluteFillObject} />
+        <View
+          style={[
+            styles.sheet,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              borderRadius: radius.xl,
+            },
+          ]}
+        >
+          <View style={styles.handleRow}>
+            <View style={[styles.handle, { backgroundColor: colors.border }]} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Закрыть"
+              disabled={busy}
+              onPress={requestClose}
+              style={({ pressed }) => [
+                styles.close,
+                { backgroundColor: colors.surfaceElevated, borderRadius: 20, opacity: pressed ? 0.7 : 1 },
+              ]}
+            >
+              <LucideIcon name="x" size={20} color={colors.textSecondary} />
             </Pressable>
           </View>
-
-          <View style={styles.questInfo}>
-            <View style={[styles.categoryIndicator, { backgroundColor: '#F472B6' }]} />
-            <Text style={{ fontFamily: 'Nunito', fontSize: 28, lineHeight: 36, fontWeight: '700', color: '#E6E8EC' }}>{quest.title}</Text>
-            {quest.description && <Text style={{ fontFamily: 'Nunito', fontSize: 16, lineHeight: 24, fontWeight: '400', color: '#8A8E99' }}>{quest.description}</Text>}
-            <View style={styles.metaRow}>
-              <View style={styles.metaItem}>
-                <Text style={{ fontFamily: 'Nunito', fontSize: 12, lineHeight: 16, fontWeight: '400', color: '#6B707A' }}>XP</Text>
-                <Text style={{ fontFamily: 'Nunito', fontSize: 16, lineHeight: 24, fontWeight: '700', fontVariant: ['tabular-nums'] as any, color: '#F5A524' }}>+{quest.xp_reward}</Text>
+          <ScrollView
+            bounces={false}
+            style={styles.scroll}
+            contentContainerStyle={styles.content}
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={[styles.icon, { backgroundColor: `${categoryColor}22`, borderColor: `${categoryColor}55` }]}>
+              <LucideIcon name={CATEGORY_ICONS[quest.category]} size={28} color={categoryColor} />
+            </View>
+            <Text style={[styles.category, typography.caption, { color: categoryColor, fontWeight: '800' }]}>
+              {CATEGORY_LABELS[quest.category].toUpperCase()}
+            </Text>
+            <Text style={[styles.title, typography.title, { color: colors.text }]}>{quest.title}</Text>
+            {quest.description ? (
+              <Text style={[styles.description, typography.body, { color: colors.textSecondary }]}>{quest.description}</Text>
+            ) : null}
+            <View style={[styles.metrics, { borderColor: colors.borderSubtle }]}>
+              <View style={styles.metric}>
+                <Text style={[styles.metricValue, typography.numeric, { color: colors.accent }]}>+{quest.xp_reward}</Text>
+                <Text style={[styles.metricLabel, typography.caption, { color: colors.textMuted }]}>XP</Text>
               </View>
-              <View style={styles.metaItem}>
-                <Text style={{ fontFamily: 'Nunito', fontSize: 12, lineHeight: 16, fontWeight: '400', color: '#6B707A' }}>Сложность</Text>
-                <Text style={{ fontFamily: 'Nunito', fontSize: 16, lineHeight: 24, fontWeight: '700', fontVariant: ['tabular-nums'] as any, color: '#A0A4AE' }}>{quest.difficulty}/3</Text>
+              <View style={[styles.metricDivider, { backgroundColor: colors.border }]} />
+              <View style={styles.metric}>
+                <Text style={[styles.metricValue, typography.numeric, { color: colors.text }]}>{quest.difficulty}/3</Text>
+                <Text style={[styles.metricLabel, typography.caption, { color: colors.textMuted }]}>сложность</Text>
               </View>
             </View>
-          </View>
-
-          <View style={styles.progressSection}>
-            <Text style={{ fontFamily: 'Nunito', fontSize: 12, lineHeight: 16, fontWeight: '400', color: '#6B707A', marginBottom: 8 }}>Прогресс фокуса</Text>
-            <View style={styles.progressTrack}>
-              <Animated.View style={[styles.progressFill, progressBarStyle]} />
-            </View>
-          </View>
-
-          <View style={styles.actions}>
-            <Button
-              title="Завершить"
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                onComplete(quest);
-              }}
-            />
-            <Button
-              title="Отмена"
-              onPress={onClose}
-              variant="ghost"
-            />
-          </View>
-        </Animated.View>
-      </Pressable>
-    </Animated.View>
+            {error ? <Text style={[styles.error, { color: colors.danger }]}>{error}</Text> : null}
+            <Pressable
+              accessibilityRole="button"
+              disabled={busy}
+              onPress={() => void complete()}
+              style={({ pressed }) => [
+                styles.primary,
+                { backgroundColor: colors.accent, borderRadius: radius.md, opacity: busy || pressed ? 0.75 : 1 },
+              ]}
+            >
+              {busy ? <ActivityIndicator color={colors.textInverse} /> : <LucideIcon name="check" size={19} color={colors.textInverse} />}
+              <Text style={[styles.primaryLabel, { color: colors.textInverse }]}>{busy ? 'Сохраняем…' : 'Отметить выполненным'}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              disabled={busy}
+              onPress={requestClose}
+              style={({ pressed }) => [styles.secondary, { opacity: pressed ? 0.65 : 1 }]}
+            >
+              <Text style={[styles.secondaryLabel, typography.bodyStrong, { color: colors.textSecondary }]}>Закрыть</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-  },
-  overlayTouch: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  modal: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: '#1A1C22',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#1E2128',
-    overflow: 'hidden',
-    padding: 24,
-  },
-  pulseRing: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#F5A524',
-    opacity: 0,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginBottom: 16,
-  },
-  closeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#23262E',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  questInfo: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  categoryIndicator: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    marginBottom: 12,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    gap: 24,
-    marginTop: 16,
-  },
-  metaItem: {
-    alignItems: 'center',
-  },
-  progressSection: {
-    marginBottom: 24,
-  },
-  progressTrack: {
-    height: 6,
-    backgroundColor: '#1E2128',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    width: '100%',
-    backgroundColor: '#F5A524',
-    borderRadius: 3,
-    transformOrigin: 'left',
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-  },
+  root: { flex: 1, justifyContent: 'center', paddingHorizontal: 16, backgroundColor: 'rgba(0,0,0,0.68)' },
+  sheet: { width: '100%', maxWidth: 440, maxHeight: '88%', flexShrink: 1, alignSelf: 'center', borderWidth: 1, overflow: 'hidden' },
+  handleRow: { paddingTop: 10, paddingHorizontal: 14, alignItems: 'center' },
+  handle: { width: 40, height: 4, borderRadius: 2 },
+  close: { position: 'absolute', right: 14, top: 14, width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  scroll: { flexShrink: 1 },
+  content: { paddingHorizontal: 22, paddingTop: 18, paddingBottom: 22, alignItems: 'center' },
+  icon: { width: 64, height: 64, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  category: { letterSpacing: 0.8, marginBottom: 7 },
+  title: { textAlign: 'center' },
+  description: { textAlign: 'center', marginTop: 8 },
+  metrics: { width: '100%', flexDirection: 'row', alignItems: 'center', marginTop: 22, paddingVertical: 14, borderWidth: 1, borderRadius: 16 },
+  metric: { flex: 1, alignItems: 'center' },
+  metricValue: { fontSize: 18, lineHeight: 24 },
+  metricLabel: { marginTop: 2 },
+  metricDivider: { width: 1, height: 34 },
+  error: { fontFamily: 'Nunito', fontSize: 13, lineHeight: 18, textAlign: 'center', marginTop: 14 },
+  primary: { width: '100%', minHeight: 50, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, marginTop: 20 },
+  primaryLabel: { fontFamily: 'Nunito', fontSize: 15, fontWeight: '800' },
+  secondary: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginTop: 4, paddingHorizontal: 20 },
+  secondaryLabel: { fontSize: 14, lineHeight: 20 },
 });
-
-export default FocusModeModal;

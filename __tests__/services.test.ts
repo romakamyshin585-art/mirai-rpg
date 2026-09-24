@@ -3,6 +3,7 @@ import { UserRepo } from '../src/repos/user_repo';
 import { QuestRepo, CompletionRepo } from '../src/repos/quest_repo';
 import { AchievementRepo, type Rarity } from '../src/repos/achievement_repo';
 import { CharacterService } from '../src/services/character_service';
+import { StatRepo } from '../src/repos/character_repo';
 import { ProgressionService } from '../src/services/progression_service';
 import { AchievementService } from '../src/services/achievement_service';
 import { levelProgress } from '../src/domain/level';
@@ -17,8 +18,9 @@ async function setup() {
 
 async function seedCatalog(db: Awaited<ReturnType<typeof freshMemoryDb>>) {
   const a = new AchievementRepo(db);
-  // All 15 codes from RULES
   const codes: Array<{ code: string; name: string; description: string; rarity: Rarity; icon: string }> = [
+    { code: 'first_step', name: 'Первый шаг', description: 'Выполни первый квест', rarity: 'common', icon: '🚶' },
+    { code: 'first_quest', name: 'Старт', description: 'Соверши первое действие', rarity: 'common', icon: '🌱' },
     { code: 'week_streak', name: 'Неделя', description: '7 дней подряд', rarity: 'rare', icon: '🔥' },
     { code: 'month_streak', name: 'Месяц', description: '30 дней подряд', rarity: 'legendary', icon: '👑' },
     { code: 'comeback', name: 'Возвращение', description: '3+ дня паузы', rarity: 'common', icon: '🔁' },
@@ -225,7 +227,6 @@ describe('AchievementService', () => {
       user_id: null, title: 'A', description: null, category: 'health',
       difficulty: 1, xp_reward: 20, is_system: 1, is_active: 1,
     });
-    // Insert the completion row directly (we're not testing progression here)
     await cRepo.insert({ quest_id: q.id, user_id: user.id, category: 'health', xp_awarded: 20, dr_multiplier: 1.0 });
     const aSvc = new AchievementService(db);
     await aSvc.checkAfterCompletion(user.id, {
@@ -235,5 +236,204 @@ describe('AchievementService', () => {
     const pbs = await aSvc.listPersonalBests(user.id);
     const day = pbs.find((p) => p.scope === 'day');
     expect(day?.value).toBe(20);
+  });
+
+  test('checkAfterCompletion uses all completions for totals', async () => {
+    const { user, db } = await setup();
+    await seedCatalog(db);
+    const qRepo = new QuestRepo(db);
+    const cRepo = new CompletionRepo(db);
+    const q = await qRepo.insert({
+      user_id: null, title: 'All time', description: null, category: 'health',
+      difficulty: 1, xp_reward: 2, is_system: 1, is_active: 1,
+    });
+    const at = new Date(2026, 7, 28, 12, 0, 0);
+    let lastId = '';
+    for (let i = 0; i < 205; i += 1) {
+      const row = await cRepo.insert({
+        quest_id: q.id,
+        user_id: user.id,
+        category: 'health',
+        xp_awarded: 2,
+        dr_multiplier: 1,
+        completed_at: at.toISOString(),
+      });
+      lastId = row.id;
+    }
+    const aSvc = new AchievementService(db);
+    await aSvc.checkAfterCompletion(user.id, {
+      completionAt: at,
+      completionId: lastId,
+      category: 'health',
+      questId: q.id,
+      difficulty: 1,
+      xpAwarded: 2,
+    });
+    const pbs = await aSvc.listPersonalBests(user.id);
+    expect(pbs.find((item) => item.scope === 'day')?.value).toBe(410);
+    expect(pbs.find((item) => item.scope === 'category:health')?.value).toBe(410);
+  });
+
+  test('first achievements, PB achievements, icon and targeted removal', async () => {
+    const { user, db } = await setup();
+    await seedCatalog(db);
+    const qRepo = new QuestRepo(db);
+    const prog = new ProgressionService(db);
+    const q = await qRepo.insert({
+      user_id: null, title: 'First', description: null, category: 'health',
+      difficulty: 1, xp_reward: 100, is_system: 1, is_active: 1,
+    });
+    const result = await prog.completeQuest(user.id, q.id);
+    const aSvc = new AchievementService(db);
+    const unlocks = await aSvc.checkAfterCompletion(user.id, {
+      completionAt: new Date(),
+      completionId: result.completionId,
+      category: 'health',
+      questId: q.id,
+      difficulty: 1,
+      xpAwarded: result.xpAwarded,
+    });
+    expect(unlocks.some((item) => item.code === 'first_step')).toBe(true);
+    expect(unlocks.some((item) => item.code === 'first_quest')).toBe(true);
+    expect(unlocks.some((item) => item.code === 'personal_record_day')).toBe(true);
+    expect(unlocks.some((item) => item.code === 'category_personal_best')).toBe(true);
+
+    const listed = await aSvc.listUnlocked(user.id);
+    expect(listed.find((item) => item.code === 'first_quest')?.icon).toBe('🌱');
+    expect(listed.find((item) => item.code === 'first_quest')?.id).toBeTruthy();
+
+    const removed = await aSvc.removeUnlocks(user.id, ['first_step']);
+    expect(removed.removed).toBe(1);
+    expect((await aSvc.listUnlocked(user.id)).some((item) => item.code === 'first_step')).toBe(false);
+  });
+
+  test('undoQuestCompletion rolls back completion, XP, level, stat and class', async () => {
+    const { user, db, char } = await setup();
+    await seedCatalog(db);
+    const qRepo = new QuestRepo(db);
+    const cRepo = new CompletionRepo(db);
+    const prog = new ProgressionService(db);
+    const q = await qRepo.insert({
+      user_id: null, title: 'Undo', description: null, category: 'health',
+      difficulty: 1, xp_reward: 100, is_system: 1, is_active: 1,
+    });
+    const completed = await prog.completeQuest(user.id, q.id);
+    expect(completed.newLevel).toBe(2);
+    expect(completed.characterClass).toBe('warrior');
+    const achievementService = new AchievementService(db);
+    const unlocks = await achievementService.checkAfterCompletion(user.id, {
+      completionAt: new Date(),
+      completionId: completed.completionId,
+      category: 'health',
+      questId: q.id,
+      difficulty: 1,
+      xpAwarded: completed.xpAwarded,
+    });
+    expect(unlocks.some((item) => item.code === 'first_step')).toBe(true);
+
+    const undone = await prog.undoQuestCompletion(
+      user.id,
+      completed.completionId,
+      unlocks.map((item) => item.code),
+    );
+    expect(undone.ok).toBe(true);
+    expect(undone.removed).toBe(true);
+    expect(undone.totalXp).toBe(0);
+    expect(undone.levelAfter).toBe(1);
+    expect(undone.characterClass).toBeNull();
+    expect(await cRepo.getById(completed.completionId)).toBeNull();
+    expect((await achievementService.listUnlocked(user.id)).some((item) => item.code === 'first_step')).toBe(false);
+    expect(await achievementService.listPersonalBests(user.id)).toHaveLength(0);
+
+    const after = await new CharacterService(db).get(user.id);
+    const stat = (await new StatRepo(db).get(char.id, 'health'));
+    expect(after?.xp).toBe(0);
+    expect(after?.level).toBe(1);
+    expect(stat?.value).toBe(0);
+    expect(stat?.xp_total_in_category).toBe(0);
+  });
+
+  test('weekend_warrior unlocks on the tenth completion of the current weekend', async () => {
+    const { user, db } = await setup();
+    await seedCatalog(db);
+    const qRepo = new QuestRepo(db);
+    const cRepo = new CompletionRepo(db);
+    const q = await qRepo.insert({
+      user_id: null, title: 'Weekend', description: null, category: 'health',
+      difficulty: 1, xp_reward: 5, is_system: 1, is_active: 1,
+    });
+    const aSvc = new AchievementService(db);
+    const at = new Date(2026, 7, 29, 12, 0, 0);
+    for (let i = 0; i < 9; i += 1) {
+      const row = await cRepo.insert({
+        quest_id: q.id,
+        user_id: user.id,
+        category: 'health',
+        xp_awarded: 5,
+        dr_multiplier: 1,
+        completed_at: at.toISOString(),
+      });
+      const unlocks = await aSvc.checkAfterCompletion(user.id, {
+        completionAt: at,
+        completionId: row.id,
+        category: 'health',
+        questId: q.id,
+        difficulty: 1,
+        xpAwarded: 5,
+      });
+      expect(unlocks.some((item) => item.code === 'weekend_warrior')).toBe(false);
+    }
+    const row = await cRepo.insert({
+      quest_id: q.id,
+      user_id: user.id,
+      category: 'health',
+      xp_awarded: 5,
+      dr_multiplier: 1,
+      completed_at: at.toISOString(),
+    });
+    const unlocks = await aSvc.checkAfterCompletion(user.id, {
+      completionAt: at,
+      completionId: row.id,
+      category: 'health',
+      questId: q.id,
+      difficulty: 1,
+      xpAwarded: 5,
+    });
+    expect(unlocks.some((item) => item.code === 'weekend_warrior')).toBe(true);
+  });
+
+  test('syncFromHistory unlocks conditions represented by existing completions', async () => {
+    const { user, db } = await setup();
+    await seedCatalog(db);
+    const qRepo = new QuestRepo(db);
+    const cRepo = new CompletionRepo(db);
+    const q = await qRepo.insert({
+      user_id: null, title: 'History', description: null, category: 'health',
+      difficulty: 1, xp_reward: 5, is_system: 1, is_active: 1,
+    });
+    for (let i = 0; i < 7; i += 1) {
+      const at = new Date(2026, 7, 20 + i, 6, 0, 0);
+      await cRepo.insert({
+        quest_id: q.id,
+        user_id: user.id,
+        category: 'health',
+        xp_awarded: 5,
+        dr_multiplier: 1,
+        completed_at: at.toISOString(),
+      });
+    }
+    const aSvc = new AchievementService(db);
+    await aSvc.syncFromHistory(user.id);
+    const codes = new Set((await aSvc.listUnlocked(user.id)).map((item) => item.code));
+    expect(codes.has('first_step')).toBe(true);
+    expect(codes.has('first_quest')).toBe(true);
+    expect(codes.has('week_streak')).toBe(true);
+    expect(codes.has('health_balance')).toBe(true);
+    expect(codes.has('early_bird')).toBe(true);
+    expect(codes.has('personal_record_day')).toBe(true);
+    expect(codes.has('category_personal_best')).toBe(true);
+    const pbs = await aSvc.listPersonalBests(user.id);
+    expect(pbs.filter((item) => item.scope === 'day')).toHaveLength(1);
+    expect(pbs.find((item) => item.scope === 'day')?.value).toBe(5);
   });
 });

@@ -62,6 +62,7 @@ export class AppContext {
       ctx.achievement = new AchievementService(ctx.db);
       console.log('[MiraiRPG] AppContext.init: ensuring user ID');
       ctx.userId = await ctx._ensureUserId();
+      await ctx.achievement.syncFromHistory(ctx.userId);
       console.log('[MiraiRPG] AppContext.init: getting/creating character');
       await ctx.character.getOrCreate(ctx.userId, 'Hero');
       AppContext.instance = ctx;

@@ -1,7 +1,3 @@
-/**
- * 15 achievement definitions. Must match codes in domain/achievements.ts.
- */
-
 import type { AchievementDefRow } from '../repos/achievement_repo';
 
 export const ACHIEVEMENT_SEED: Omit<AchievementDefRow, 'id' | 'created_at'>[] = [

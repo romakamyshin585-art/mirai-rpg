@@ -1,0 +1,96 @@
+{
+  "tool": "mobile-redesign-app",
+  "version": 1,
+  "date": "2026-09-24",
+  "designScore": "B+",
+  "slopScore": "A",
+  "categories": {
+    "navigation": "B",
+    "screenAnatomy": "A-",
+    "typography": "A-",
+    "color": "A",
+    "surfaces": "A-",
+    "states": "B+",
+    "interaction": "A-",
+    "forms": "B+",
+    "performance": "B+",
+    "copy": "A"
+  },
+  "findings": [
+    {
+      "id": "FINDING-001",
+      "impact": "high",
+      "category": "interaction",
+      "summary": "Home content remained hidden behind a failed entrance animation",
+      "status": "fixed"
+    },
+    {
+      "id": "FINDING-002",
+      "impact": "high",
+      "category": "screenAnatomy",
+      "summary": "Bottom navigation covered content and the add-quest action",
+      "status": "fixed"
+    },
+    {
+      "id": "FINDING-003",
+      "impact": "high",
+      "category": "navigation",
+      "summary": "Tab indicator used fixed coordinates and did not align with icon centers",
+      "status": "fixed"
+    },
+    {
+      "id": "FINDING-004",
+      "impact": "high",
+      "category": "states",
+      "summary": "Quest list had no reliable loading and completion state",
+      "status": "fixed"
+    },
+    {
+      "id": "FINDING-005",
+      "impact": "high",
+      "category": "interaction",
+      "summary": "Accidental quest completion could not be undone",
+      "status": "fixed"
+    },
+    {
+      "id": "FINDING-006",
+      "impact": "high",
+      "category": "screenAnatomy",
+      "summary": "Calendar day detail was a clipped in-content overlay without reliable dismissal",
+      "status": "fixed"
+    },
+    {
+      "id": "FINDING-007",
+      "impact": "high",
+      "category": "states",
+      "summary": "Profile violated Rules of Hooks during async character loading",
+      "status": "fixed"
+    },
+    {
+      "id": "FINDING-008",
+      "impact": "high",
+      "category": "interaction",
+      "summary": "Achievement catalog and rule engine were inconsistent",
+      "status": "fixed"
+    },
+    {
+      "id": "FINDING-009",
+      "impact": "medium",
+      "category": "performance",
+      "summary": "Radar chart used fixed screen dimensions and overflowed on phones",
+      "status": "fixed"
+    },
+    {
+      "id": "FINDING-010",
+      "impact": "medium",
+      "category": "copy",
+      "summary": "Calendar used a heatmap instead of the Russian monthly production calendar",
+      "status": "fixed"
+    }
+  ],
+  "unverified": [
+    "physical Android device frame timing and touch feel",
+    "small-screen and large-font variants",
+    "release APK after EAS completes"
+  ]
+}

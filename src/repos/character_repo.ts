@@ -71,6 +71,12 @@ export class CharacterRepo {
     return this.getById(id);
   }
 
+  async setXp(id: string, xp: number): Promise<CharacterRow | null> {
+    const normalizedXp = Number.isFinite(xp) ? Math.max(0, Math.floor(xp)) : 0;
+    await this.db.exec(`UPDATE character SET xp = ? WHERE id = ?`, [normalizedXp, id]);
+    return this.getById(id);
+  }
+
   async setLevel(id: string, level: number): Promise<void> {
     await this.db.exec(`UPDATE character SET level = ? WHERE id = ?`, [level, id]);
   }
@@ -122,6 +128,20 @@ export class StatRepo {
       `UPDATE stat SET value = value + ?, xp_total_in_category = xp_total_in_category + ?
        WHERE character_id = ? AND category = ?`,
       [valueDelta, xpDelta, characterId, category],
+    );
+    return this.get(characterId, category);
+  }
+
+  async decrementValue(characterId: string, category: Category, valueDelta: number, xpDelta: number): Promise<StatRow | null> {
+    const current = await this.get(characterId, category);
+    if (!current) return null;
+    const currentValue = Number.isFinite(current.value) ? current.value : 0;
+    const currentXp = Number.isFinite(current.xp_total_in_category) ? current.xp_total_in_category : 0;
+    const nextValue = Math.max(0, currentValue - valueDelta);
+    const nextXp = Math.max(0, currentXp - xpDelta);
+    await this.db.exec(
+      `UPDATE stat SET value = ?, xp_total_in_category = ? WHERE character_id = ? AND category = ?`,
+      [nextValue, nextXp, characterId, category],
     );
     return this.get(characterId, category);
   }

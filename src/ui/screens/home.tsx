@@ -1,270 +1,359 @@
-/**
- * HomeScreen — Main dashboard with Radar chart + living dashboard.
- */
-
-import { useState, useEffect, useCallback } from 'react';
-import { View, RefreshControl, StyleSheet } from 'react-native';
-import Animated, { useSharedValue, withSpring, useAnimatedStyle, interpolate, Extrapolate, useAnimatedScrollHandler } from 'react-native-reanimated';
-import { RadarChart, RadarData } from '../components/RadarChart';
-import { PlayerHeader } from '../components/PlayerHeader';
-import { LevelProgressRing } from '../components/LevelProgressRing';
-import { DailyProgress } from '../components/DailyProgress';
-import { NextQuestRow } from '../components/NextQuestRow';
-import { AppContext } from '../app_context';
-import { useTheme } from '../theme';
-import { SPACING } from '../theme';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { AppContext } from '../app_context';
+import type { QuestRow } from '../../repos/quest_repo';
+import type { CharacterRow, StatRow } from '../../repos/character_repo';
 import { CATEGORIES, type Category } from '../../domain/category';
 import { levelProgress } from '../../domain/level';
-import { useEntranceAnimation, useHaptics } from '../motion';
+import { BOTTOM_NAV_BASE_HEIGHT, CATEGORY_LABELS, useTheme } from '../theme';
+import { LucideIcon } from '../components';
 
-export function HomeScreen({ ctx }: { ctx: AppContext }) {
-  const { colors } = useTheme();
-  const { press } = useHaptics();
-  
-  const [character, setCharacter] = useState<Awaited<ReturnType<typeof ctx.character.get>> | null>(null);
-  const [stats, setStats] = useState<Array<{ category: Category; value: number; xp_total_in_category: number }>>([]);
+const DAILY_GOAL = 5;
+
+const CATEGORY_ICONS: Record<Category, string> = {
+  health: 'heart-pulse',
+  knowledge: 'book-open',
+  career: 'briefcase-business',
+  discipline: 'target',
+  social: 'users',
+};
+
+const CLASS_LABELS: Record<string, string> = {
+  warrior: 'Воин',
+  scholar: 'Учёный',
+  builder: 'Строитель',
+  monk: 'Монах',
+  leader: 'Лидер',
+};
+
+const CLASS_ICONS: Record<string, string> = {
+  warrior: 'sword',
+  scholar: 'book-open',
+  builder: 'hammer',
+  monk: 'circle',
+  leader: 'crown',
+};
+
+type HomeScreenProps = {
+  ctx: AppContext;
+  revision: number;
+  onOpenQuests: () => void;
+};
+
+export function HomeScreen({ ctx, revision, onOpenQuests }: HomeScreenProps) {
+  const { colors, radius, typographyStylesheet: typography } = useTheme();
+  const insets = useSafeAreaInsets();
+  const [character, setCharacter] = useState<CharacterRow | null>(null);
+  const [stats, setStats] = useState<StatRow[]>([]);
   const [todayXp, setTodayXp] = useState(0);
   const [completedToday, setCompletedToday] = useState(0);
-  const [totalActiveQuests, setTotalActiveQuests] = useState(0);
-  const [nextQuest, setNextQuest] = useState<{ id: string; title: string; category: Category; difficulty: 1 | 2 | 3; xp_reward: number; time: string } | null>(null);
+  const [streak, setStreak] = useState(0);
+  const [activeQuests, setActiveQuests] = useState<QuestRow[]>([]);
+  const [nextQuest, setNextQuest] = useState<QuestRow | null>(null);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [radarData, setRadarData] = useState<RadarData[]>([]);
-  const [categoryXp, setCategoryXp] = useState<Record<Category, number>>({ health: 0, knowledge: 0, career: 0, discipline: 0, social: 0 });
-  
-  const entranceProgress = useEntranceAnimation({ tier: 'standard', delay: 0 });
-  const scrollY = useSharedValue(0);
+  const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
+    setError(null);
     try {
       const char = await ctx.character.get(ctx.userId);
-      if (!char) return;
-      
+      if (!char) throw new Error('Персонаж не найден');
+      const [characterStats, todayProgress, quests, currentStreak] = await Promise.all([
+        ctx.character.getStats(char.id),
+        ctx.quest.getTodayProgress(ctx.userId),
+        ctx.quest.list(ctx.userId),
+        ctx.quest.getStreak(ctx.userId),
+      ]);
       setCharacter(char);
-      
-      const characterStats = await ctx.character.getStats(char.id);
       setStats(characterStats);
-      
-      // Load real today progress from QuestService
-      const todayProgress = await ctx.quest.getTodayProgress(ctx.userId);
       setTodayXp(todayProgress.todayXp);
       setCompletedToday(todayProgress.completedToday);
-      setCategoryXp(todayProgress.categoryXp);
-      
-      const allQuests = await ctx.quest.list(ctx.userId);
-      setTotalActiveQuests(allQuests.length);
-      
-      const firstQuest = allQuests[0];
-      if (firstQuest) {
-        setNextQuest({
-          id: firstQuest.id,
-          title: firstQuest.title,
-          category: firstQuest.category,
-          difficulty: firstQuest.difficulty as 1 | 2 | 3,
-          xp_reward: firstQuest.xp_reward,
-          time: '00:00',
-        });
-      }
-      
-      const radarData = CATEGORIES.map((cat): RadarData => {
-        const stat = characterStats.find(s => s.category === cat);
-        const maxXpForLevel = Math.max(1, stat?.xp_total_in_category || 1);
-        return {
-          category: cat,
-          value: Math.min(1, (stat?.xp_total_in_category || 0) / Math.max(100, maxXpForLevel)),
-          xp: stat?.xp_total_in_category || 0,
-          questsCompleted: stat?.value || 0,
-          weeklyChange: 0,
-        };
-      });
-      setRadarData(radarData);
-      
-    } catch (e) {
-      console.error('HomeScreen loadData error:', e);
+      setStreak(currentStreak);
+      setActiveQuests(quests);
+      setNextQuest(quests[0] ?? null);
+    } catch (value) {
+      setError(value instanceof Error ? value.message : String(value));
+    } finally {
+      setLoading(false);
     }
   }, [ctx]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    void loadData();
+  }, [loadData, revision]);
 
-  const onRefresh = useCallback(async () => {
+  const refresh = async () => {
     setRefreshing(true);
     await loadData();
     setRefreshing(false);
-    await press();
-  }, [loadData, press]);
+  };
 
-  const handleCategoryPress = useCallback((category: Category) => {
-    press();
-  }, [press]);
-
-  const handleNextQuestPress = useCallback(() => {
-    if (nextQuest) {
-      press();
-    }
-  }, [nextQuest, press]);
-
-  const onScroll = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      scrollY.value = event.contentOffset.y;
-    },
-  });
-
-  if (!character) {
+  if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <View style={styles.loadingSpinner} />
+      <View style={[styles.center, { backgroundColor: colors.bg }]}>
+        <ActivityIndicator color={colors.accent} size="large" />
+        <Text style={[styles.loading, { color: colors.textMuted }]}>Собираем твой прогресс…</Text>
+      </View>
+    );
+  }
+
+  if (!character || error) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.bg }]}>
+        <LucideIcon name="cloud-off" size={38} color={colors.danger} />
+        <Text style={[styles.errorTitle, { color: colors.text }]}>Home временно недоступен</Text>
+        <Text style={[styles.errorText, { color: colors.textMuted }]}>{error ?? 'Не удалось загрузить данные'}</Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => void loadData()}
+          style={({ pressed }) => [styles.retry, { backgroundColor: colors.accent, opacity: pressed ? 0.8 : 1 }]}
+        >
+          <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Повторить</Text>
+        </Pressable>
       </View>
     );
   }
 
   const progress = levelProgress(character.xp);
+  const goalProgress = Math.min(1, completedToday / DAILY_GOAL);
+  const greeting = getGreeting();
+  const classLabel = character.class ? CLASS_LABELS[character.class] ?? character.class : 'Путь ещё не выбран';
 
   return (
-    <Animated.ScrollView
-      style={styles.scrollView}
-      contentContainerStyle={styles.scrollContent}
+    <ScrollView
+      style={[styles.scroll, { backgroundColor: colors.bg }]}
+      contentContainerStyle={[
+        styles.content,
+        { paddingTop: insets.top + 14, paddingBottom: BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 28 },
+      ]}
+      showsVerticalScrollIndicator={false}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={onRefresh}
+          onRefresh={() => void refresh()}
           colors={[colors.accent]}
           progressBackgroundColor={colors.surface}
+          tintColor={colors.accent}
         />
       }
-      onScroll={onScroll}
-      showsVerticalScrollIndicator={false}
     >
-      <Animated.View style={[styles.entranceWrapper, { opacity: entranceProgress.value }]}>
-        
-        <Animated.View
-          style={[
-            styles.section,
-            {
-              opacity: entranceProgress.value,
-              transform: [{ translateY: interpolate(entranceProgress.value, [0, 1], [20, 0], Extrapolate.CLAMP) }],
-            },
-          ]}
-        >
-          <PlayerHeader
-            name={character.name || 'Hero'}
-            level={character.level}
-            class={character.class}
-            xp={character.xp}
-            xpForNextLevel={progress.xp_for_next_level}
-            xpIntoLevel={progress.xp_into_level}
-          />
-        </Animated.View>
+      <View style={styles.heading}>
+        <View style={styles.headingCopy}>
+          <Text style={[styles.greeting, typography.caption, { color: colors.textMuted }]}>{greeting}</Text>
+          <Text style={[styles.name, typography.title, { color: colors.text }]}>{character.name || 'Hero'}</Text>
+          <Text style={[styles.subtitle, typography.caption, { color: colors.textMuted }]}>Каждый день — это новый квест</Text>
+        </View>
+        <View style={[styles.avatar, { borderColor: colors.accent, backgroundColor: colors.surfaceElevated }]}>
+          <LucideIcon name="user-round" size={29} color={colors.accent} />
+          <View style={[styles.levelDot, { backgroundColor: colors.accent, borderColor: colors.bg }]}>
+            <Text style={[styles.levelDotText, { color: colors.textInverse }]}>{character.level}</Text>
+          </View>
+        </View>
+      </View>
 
-        <Animated.View
-          style={[
-            styles.section,
-            {
-              opacity: entranceProgress.value,
-              transform: [{ translateY: interpolate(entranceProgress.value, [0, 1], [30, 0], Extrapolate.CLAMP) }],
-            },
-          ]}
-        >
-          <View style={styles.levelRadarRow}>
-            <View style={styles.levelProgressWrapper}>
-              <LevelProgressRing xp={character.xp} size={100} strokeWidth={8} />
-            </View>
-            <View style={styles.radarWrapper}>
-              <RadarChart
-                data={radarData}
-                animated
-                interactive
-                onCategoryPress={handleCategoryPress}
-              />
+      <View style={[styles.playerCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, borderRadius: radius.xl }]}>
+        <View style={styles.playerTop}>
+          <View style={styles.playerIdentity}>
+            <Text style={[styles.playerName, typography.bodyStrong, { color: colors.text }]}>{character.name || 'Hero'}</Text>
+            <View style={styles.classRow}>
+              <LucideIcon name={CLASS_ICONS[character.class ?? ''] ?? 'sparkles'} size={15} color={colors.accent} />
+              <Text style={[styles.classLabel, typography.caption, { color: colors.accent }]}>{classLabel}</Text>
             </View>
           </View>
-        </Animated.View>
+          <View style={[styles.levelBadge, { backgroundColor: colors.accentSoft }]}>
+            <Text style={[styles.levelText, typography.numeric, { color: colors.accent }]}>LV {character.level}</Text>
+          </View>
+        </View>
+        <View style={styles.xpLabels}>
+          <Text style={[styles.xpLabel, typography.caption, { color: colors.textMuted }]}>{progress.xp_into_level} / {progress.xp_for_next_level} XP</Text>
+          <Text style={[styles.xpLabel, typography.caption, { color: colors.textMuted }]}>{progress.level_progress_pct}%</Text>
+        </View>
+        <View style={[styles.xpTrack, { backgroundColor: colors.surfaceFloating }]}>
+          <View style={[styles.xpFill, { width: `${progress.level_progress_pct}%`, backgroundColor: colors.accent }]} />
+        </View>
+      </View>
 
-        <Animated.View
-          style={[
-            styles.section,
-            {
-              opacity: entranceProgress.value,
-              transform: [{ translateY: interpolate(entranceProgress.value, [0, 1], [40, 0], Extrapolate.CLAMP) }],
-            },
-          ]}
+      <View style={styles.metricsRow}>
+        <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+          <View style={styles.metricHeading}>
+            <View style={[styles.metricIcon, { backgroundColor: colors.accentSoft }]}>
+              <LucideIcon name="zap" size={18} color={colors.accent} />
+            </View>
+            <Text style={[styles.metricLabel, typography.caption, { color: colors.textMuted }]}>Сегодня</Text>
+          </View>
+          <Text style={[styles.metricValue, typography.numericDisplay, { color: colors.accent }]}>{todayXp}</Text>
+          <Text style={[styles.metricHint, typography.caption, { color: colors.textMuted }]}>XP заработано</Text>
+        </View>
+        <View style={[styles.metricCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+          <View style={styles.metricHeading}>
+            <View style={[styles.metricIcon, { backgroundColor: `${colors.warning}20` }]}>
+              <LucideIcon name="flame" size={18} color={colors.warning} />
+            </View>
+            <Text style={[styles.metricLabel, typography.caption, { color: colors.textMuted }]}>Серия</Text>
+          </View>
+          <Text style={[styles.metricValue, typography.numericDisplay, { color: colors.text }]}>{streak}</Text>
+          <Text style={[styles.metricHint, typography.caption, { color: colors.textMuted }]}>дней подряд</Text>
+        </View>
+      </View>
+
+      <View style={styles.sectionHeading}>
+        <Text style={[styles.sectionTitle, typography.bodyStrong, { color: colors.text }]}>Активность</Text>
+        <Text style={[styles.sectionMeta, typography.caption, { color: colors.textMuted }]}>{completedToday} из {DAILY_GOAL} квестов</Text>
+      </View>
+      <View style={[styles.activityCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+        <View style={styles.activityGrid}>
+          {CATEGORIES.map(category => {
+            const stat = stats.find(item => item.category === category);
+            const categoryColor = colors[`cat${category.charAt(0).toUpperCase()}${category.slice(1)}` as keyof typeof colors];
+            return (
+              <View key={category} style={styles.activityItem}>
+                <View style={[styles.activityIcon, { backgroundColor: `${categoryColor}20` }]}>
+                  <LucideIcon name={CATEGORY_ICONS[category]} size={18} color={categoryColor} />
+                </View>
+                <View style={styles.activityCopy}>
+                  <Text style={[styles.activityLabel, typography.caption, { color: colors.textSecondary }]}>{CATEGORY_LABELS[category]}</Text>
+                  <Text style={[styles.activityValue, typography.numeric, { color: colors.text }]}>{stat?.value ?? 0}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+
+      <Pressable
+        accessibilityRole="button"
+        onPress={onOpenQuests}
+        style={({ pressed }) => [
+          styles.goalCard,
+          { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, opacity: pressed ? 0.88 : 1 },
+        ]}
+      >
+        <View style={styles.goalIcon}>
+          <LucideIcon name="target" size={24} color={colors.accent} />
+        </View>
+        <View style={styles.goalCopy}>
+          <View style={styles.goalHeading}>
+            <Text style={[styles.goalTitle, typography.bodyStrong, { color: colors.text }]}>Цель на сегодня</Text>
+            <Text style={[styles.goalCount, typography.numeric, { color: colors.accent }]}>{completedToday}/{DAILY_GOAL}</Text>
+          </View>
+          <View style={[styles.goalTrack, { backgroundColor: colors.surfaceFloating }]}>
+            <View style={[styles.goalFill, { width: `${goalProgress * 100}%`, backgroundColor: colors.accent }]} />
+          </View>
+          <Text style={[styles.goalHint, typography.caption, { color: colors.textMuted }]}>Заверши ещё {Math.max(0, DAILY_GOAL - completedToday)} квестов</Text>
+        </View>
+        <LucideIcon name="chevron-right" size={19} color={colors.textMuted} />
+      </Pressable>
+
+      <View style={styles.sectionHeading}>
+        <Text style={[styles.sectionTitle, typography.bodyStrong, { color: colors.text }]}>Следующий квест</Text>
+        <Text style={[styles.sectionMeta, typography.caption, { color: colors.textMuted }]}>{activeQuests.length} доступно</Text>
+      </View>
+      {nextQuest ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onOpenQuests}
+          style={({ pressed }) => [styles.nextCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, opacity: pressed ? 0.85 : 1 }]}
         >
-          <DailyProgress
-            todayXp={todayXp}
-            completedQuests={completedToday}
-            totalQuests={totalActiveQuests}
-            streak={calculateStreak(character)}
-            categoryXp={categoryXp}
-            nextQuest={nextQuest || undefined}
-          />
-        </Animated.View>
-
-        <Animated.View
-          style={[
-            styles.section,
-            {
-              opacity: entranceProgress.value,
-              transform: [{ translateY: interpolate(entranceProgress.value, [0, 1], [50, 0], Extrapolate.CLAMP) }],
-            },
-          ]}
+          <View style={[styles.nextIcon, { backgroundColor: `${colors.catCareer}20` }]}>
+            <LucideIcon name="scroll-text" size={23} color={colors.catCareer} />
+          </View>
+          <View style={styles.nextCopy}>
+            <Text numberOfLines={1} style={[styles.nextTitle, typography.bodyStrong, { color: colors.text }]}>{nextQuest.title}</Text>
+            <Text style={[styles.nextMeta, typography.caption, { color: colors.textMuted }]}>{CATEGORY_LABELS[nextQuest.category]} · сложность {nextQuest.difficulty}/3</Text>
+          </View>
+          <View style={styles.nextReward}>
+            <Text style={[styles.nextXp, typography.numeric, { color: colors.accent }]}>+{nextQuest.xp_reward}</Text>
+            <Text style={[styles.nextXpLabel, typography.caption, { color: colors.textMuted }]}>XP</Text>
+          </View>
+        </Pressable>
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onOpenQuests}
+          style={({ pressed }) => [styles.nextCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, opacity: pressed ? 0.85 : 1 }]}
         >
-          <NextQuestRow quest={nextQuest} onPress={handleNextQuestPress} />
-        </Animated.View>
-
-      </Animated.View>
-    </Animated.ScrollView>
+          <View style={styles.nextCopy}>
+            <Text style={[styles.nextTitle, typography.bodyStrong, { color: colors.text }]}>Добавь первый квест</Text>
+            <Text style={[styles.nextMeta, typography.caption, { color: colors.textMuted }]}>Открой Quests и начни путь</Text>
+          </View>
+          <LucideIcon name="plus" size={22} color={colors.accent} />
+        </Pressable>
+      )}
+    </ScrollView>
   );
 }
 
-function calculateStreak(character: { xp: number }): number {
-  return 7;
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 6) return 'Доброй ночи';
+  if (hour < 12) return 'Доброе утро';
+  if (hour < 18) return 'Добрый день';
+  return 'Добрый вечер';
 }
 
 const styles = StyleSheet.create({
-  scrollView: {
-    flex: 1,
-    backgroundColor: '#0E0F12',
-  },
-  scrollContent: {
-    paddingHorizontal: SPACING.lg,
-    paddingTop: SPACING.lg,
-    paddingBottom: SPACING.xxl,
-    gap: SPACING.lg,
-  },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: '#0E0F12',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingSpinner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 3,
-    borderColor: '#F5A524',
-    borderTopColor: 'transparent',
-  },
-  entranceWrapper: {
-    width: '100%',
-  },
-  section: {
-    width: '100%',
-  },
-  levelRadarRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: SPACING.md,
-  },
-  levelProgressWrapper: {
-    width: 100,
-    alignItems: 'center',
-  },
-  radarWrapper: {
-    flex: 1,
-    maxWidth: 280,
-  },
+  scroll: { flex: 1 },
+  content: { paddingHorizontal: 16, gap: 16 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 10 },
+  loading: { fontFamily: 'Nunito', fontSize: 13 },
+  errorTitle: { fontFamily: 'Nunito', fontSize: 18, fontWeight: '800', textAlign: 'center' },
+  errorText: { fontFamily: 'Nunito', fontSize: 13, lineHeight: 18, textAlign: 'center' },
+  retry: { minHeight: 46, borderRadius: 14, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+  retryLabel: { fontFamily: 'Nunito', fontSize: 14, fontWeight: '800' },
+  heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  headingCopy: { flex: 1 },
+  greeting: { fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+  name: { fontSize: 28, lineHeight: 34, marginTop: 1 },
+  subtitle: { marginTop: 3 },
+  avatar: { width: 64, height: 64, borderRadius: 32, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  levelDot: { position: 'absolute', right: -3, bottom: -2, width: 24, height: 24, borderRadius: 12, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  levelDotText: { fontFamily: 'Nunito', fontSize: 11, lineHeight: 14, fontWeight: '900' },
+  playerCard: { borderWidth: 1, padding: 16 },
+  playerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  playerIdentity: { flex: 1 },
+  playerName: { fontSize: 17, lineHeight: 22 },
+  classRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  classLabel: { fontWeight: '800' },
+  levelBadge: { paddingHorizontal: 11, paddingVertical: 6, borderRadius: 12 },
+  levelText: { fontSize: 14, lineHeight: 18 },
+  xpLabels: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, marginBottom: 6 },
+  xpLabel: { fontVariant: ['tabular-nums'] },
+  xpTrack: { height: 7, borderRadius: 4, overflow: 'hidden' },
+  xpFill: { height: '100%', borderRadius: 4 },
+  metricsRow: { flexDirection: 'row', gap: 10 },
+  metricCard: { flex: 1, minHeight: 142, borderWidth: 1, borderRadius: 18, padding: 14 },
+  metricHeading: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  metricIcon: { width: 32, height: 32, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  metricLabel: { fontWeight: '700' },
+  metricValue: { fontSize: 34, lineHeight: 40, marginTop: 11 },
+  metricHint: { marginTop: 1 },
+  sectionHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 1 },
+  sectionTitle: { fontSize: 16, lineHeight: 21 },
+  sectionMeta: {},
+  activityCard: { borderWidth: 1, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10 },
+  activityGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 4 },
+  activityItem: { width: '50%', flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 9, paddingHorizontal: 3 },
+  activityIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  activityCopy: { flex: 1 },
+  activityLabel: {},
+  activityValue: { fontSize: 15, lineHeight: 19, marginTop: 1 },
+  goalCard: { minHeight: 96, borderWidth: 1, borderRadius: 18, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  goalIcon: { width: 46, height: 46, borderRadius: 16, backgroundColor: 'rgba(245,165,36,0.12)', alignItems: 'center', justifyContent: 'center' },
+  goalCopy: { flex: 1 },
+  goalHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  goalTitle: { fontSize: 15, lineHeight: 20 },
+  goalCount: { fontSize: 14, lineHeight: 18 },
+  goalTrack: { height: 6, borderRadius: 3, overflow: 'hidden', marginTop: 9 },
+  goalFill: { height: '100%', borderRadius: 3 },
+  goalHint: { marginTop: 5 },
+  nextCard: { minHeight: 78, borderWidth: 1, borderRadius: 18, padding: 13, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  nextIcon: { width: 46, height: 46, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  nextCopy: { flex: 1, minWidth: 0 },
+  nextTitle: { fontSize: 15, lineHeight: 20 },
+  nextMeta: { marginTop: 3 },
+  nextReward: { alignItems: 'flex-end' },
+  nextXp: { fontSize: 16, lineHeight: 20 },
+  nextXpLabel: { fontSize: 10, lineHeight: 13 },
 });
-
-export default HomeScreen;

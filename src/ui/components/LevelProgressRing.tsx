@@ -1,103 +1,74 @@
-/**
- * LevelProgressRing — Animated circular progress for level/XP.
- */
-
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { useSharedValue, withSpring, useAnimatedProps } from 'react-native-reanimated';
+import { StyleSheet, Text, View } from 'react-native';
 import { Circle, Svg } from 'react-native-svg';
-import { useTheme } from '../theme';
 import { levelProgress } from '../../domain/level';
-import Animated from 'react-native-reanimated';
+import { useTheme } from '../theme';
 
-const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-
-interface LevelProgressRingProps {
+type LevelProgressRingProps = {
   xp: number;
   size?: number;
   strokeWidth?: number;
   showLevel?: boolean;
-}
+};
 
 export function LevelProgressRing({ xp, size = 80, strokeWidth = 6, showLevel = true }: LevelProgressRingProps) {
-  const { colors } = useTheme();
-  const { numericDisplay, caption } = useTheme().typographyStylesheet;
+  const { colors, typographyStylesheet } = useTheme();
   const progress = levelProgress(xp);
-  const pct = progress.level_progress_pct / 100;
-  
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
-  
-  const entranceProgress = useSharedValue(0);
-  const progressAnim = useSharedValue(0);
-
-  React.useEffect(() => {
-    entranceProgress.value = withSpring(1, { damping: 22, stiffness: 180 });
-    progressAnim.value = withSpring(pct, { damping: 20, stiffness: 150 });
-  }, [pct]);
-
-  const circleProps = useAnimatedProps(() => {
-    const strokeDashoffset = circumference * (1 - progressAnim.value) * entranceProgress.value;
-    return {
-      strokeDashoffset,
-      opacity: entranceProgress.value,
-    };
-  });
+  const offset = circumference * (1 - progress.level_progress_pct / 100);
 
   return (
-    <View style={[styles.container, { width: size, height: size }]}>
+    <View
+      accessible
+      accessibilityLabel={`Уровень ${progress.level}, ${progress.level_progress_pct} процентов до следующего`}
+      style={[styles.container, { width: size, height: size }]}
+    >
       <Svg width={size} height={size} style={styles.svg}>
         <Circle
           cx={size / 2}
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#1E2128"
+          stroke={colors.surfaceFloating}
           strokeWidth={strokeWidth}
         />
-        <AnimatedCircle
-          {...circleProps}
+        <Circle
           cx={size / 2}
           cy={size / 2}
           r={radius}
           fill="none"
-          stroke="#F5A524"
+          stroke={colors.accent}
           strokeWidth={strokeWidth}
           strokeLinecap="round"
           strokeDasharray={circumference}
-          transform={[{ rotate: '-90deg' }]}
+          strokeDashoffset={offset}
+          rotation="-90"
+          origin={`${size / 2}, ${size / 2}`}
         />
       </Svg>
-      
-      <View style={styles.centerContent}>
-        {showLevel && (
-          <>
-            <Text style={{ ...useTheme().typographyStylesheet.numericDisplay, color: colors.text, fontSize: size * 0.28 }}>Lv.{progress.level}</Text>
-            <Text style={{ ...useTheme().typographyStylesheet.caption, color: colors.textMuted, marginTop: -4 }}>{progress.level_progress_pct}%</Text>
-          </>
-        )}
-        {!showLevel && (
-          <Text style={{ ...useTheme().typographyStylesheet.numericDisplay, color: colors.accent, fontSize: size * 0.22 }}>{Math.round(pct * 100)}%</Text>
-        )}
+      <View style={styles.content}>
+        <Text
+          style={[
+            typographyStylesheet.numeric,
+            { color: showLevel ? colors.text : colors.accent, fontSize: showLevel ? size * 0.25 : size * 0.22 },
+          ]}
+        >
+          {showLevel ? `Lv.${progress.level}` : `${progress.level_progress_pct}%`}
+        </Text>
+        {showLevel ? (
+          <Text style={[typographyStylesheet.caption, { color: colors.textMuted, fontSize: Math.max(9, size * 0.1) }]}>
+            {progress.level_progress_pct}%
+          </Text>
+        ) : null}
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  svg: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-  },
-  centerContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  container: { alignItems: 'center', justifyContent: 'center' },
+  svg: { position: 'absolute', top: 0, left: 0 },
+  content: { alignItems: 'center', justifyContent: 'center' },
 });
 
 export default LevelProgressRing;

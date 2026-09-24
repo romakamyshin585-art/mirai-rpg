@@ -38,7 +38,7 @@ export function DailyProgress({
   nextQuest,
 }: DailyProgressProps) {
   const { colors, motion } = useTheme();
-  const { numeric, numericDisplay, caption, section, body, bodyStrong } = useTheme().typographyStylesheet;
+  const { numeric, numericDisplay, caption, section, body } = useTheme().typographyStylesheet;
   
   const entranceProgress = useSharedValue(0);
   const statEntrance = useSharedValue(0);

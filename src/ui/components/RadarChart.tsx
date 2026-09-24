@@ -1,61 +1,42 @@
 import { useCallback, useMemo, useState } from 'react';
-import { View, StyleSheet, Dimensions, Text } from 'react-native';
-import { Svg, Path, Circle, Line, G, Text as SvgText } from 'react-native-svg';
-import { useTheme } from '../theme';
+import { StyleSheet, Text, View } from 'react-native';
+import { Circle, G, Line, Path, Svg, Text as SvgText } from 'react-native-svg';
 import { CATEGORIES, type Category } from '../../domain/category';
-import { CATEGORY_LABELS, SPACING } from '../theme';
+import { CATEGORY_LABELS, useTheme } from '../theme';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const RADAR_SIZE = Math.min(SCREEN_WIDTH - 48, 320);
-const CENTER = RADAR_SIZE / 2;
-const MAX_RADIUS = CENTER - 24;
-const AXES = 5;
-const ANGLE_OFFSET = -Math.PI / 2;
-
-export interface RadarData {
+export type RadarData = {
   category: Category;
   value: number;
   xp: number;
   questsCompleted: number;
   weeklyChange: number;
-}
+};
 
-export interface RadarChartProps {
+type RadarChartProps = {
   data: RadarData[];
   animated?: boolean;
   interactive?: boolean;
   onCategoryPress?: (category: Category) => void;
-}
+};
 
-const AXIS_ANGLES = CATEGORIES.map((_, i) => ANGLE_OFFSET + (i / AXES) * 2 * Math.PI);
+const AXES = 5;
+const ANGLE_OFFSET = -Math.PI / 2;
 const GRID_LEVELS = 4;
-const GRID_RADII = Array.from({ length: GRID_LEVELS }, (_, i) => MAX_RADIUS * ((i + 1) / GRID_LEVELS));
-const LABEL_RADIUS = MAX_RADIUS + 28;
-
-function polarToCartesian(center: number, radius: number, angle: number) {
-  return {
-    x: center + radius * Math.cos(angle),
-    y: center + radius * Math.sin(angle),
-  };
-}
-
-function getPolygonPoints(values: number[], maxRadius: number, center: number) {
-  return values.map((value, i) => polarToCartesian(center, maxRadius * value, AXIS_ANGLES[i]));
-}
-
-function pointsToPath(points: Array<{ x: number; y: number }>) {
-  return points.map((point, i) => `${i === 0 ? 'M' : 'L'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ') + ' Z';
-}
-
-const GRID_POINTS = GRID_RADII.map((radius) => getPolygonPoints(Array(AXES).fill(1), radius, CENTER));
-const AXIS_END_POINTS = AXIS_ANGLES.map((angle) => polarToCartesian(CENTER, MAX_RADIUS + 4, angle));
-const LABEL_POINTS = AXIS_ANGLES.map((angle) => polarToCartesian(CENTER, LABEL_RADIUS, angle));
 
 export function RadarChart({ data, interactive = true, onCategoryPress }: RadarChartProps) {
   const { colors, typographyStylesheet } = useTheme();
+  const [width, setWidth] = useState(0);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
-  const normalizedData = useMemo(
-    () => CATEGORIES.map((category) => data.find((item) => item.category === category) ?? {
+  const size = width > 0 ? Math.min(width, 300) : 240;
+  const center = size / 2;
+  const maxRadius = Math.max(42, center - 40);
+  const labelRadius = maxRadius + 22;
+  const angles = useMemo(
+    () => CATEGORIES.map((_, index) => ANGLE_OFFSET + (index / AXES) * 2 * Math.PI),
+    [],
+  );
+  const normalized = useMemo(
+    () => CATEGORIES.map(category => data.find(item => item.category === category) ?? {
       category,
       value: 0,
       xp: 0,
@@ -64,155 +45,130 @@ export function RadarChart({ data, interactive = true, onCategoryPress }: RadarC
     }),
     [data],
   );
-  const values = useMemo(() => normalizedData.map((item) => item.value), [normalizedData]);
-  const points = useMemo(() => getPolygonPoints(values, MAX_RADIUS, CENTER), [values]);
-  const selectedData = selectedCategory
-    ? normalizedData.find((item) => item.category === selectedCategory) ?? null
-    : null;
+  const polygonPath = useMemo(
+    () => pointsToPath(normalized.map(item => point(center, maxRadius * item.value, angles[CATEGORIES.indexOf(item.category)]))),
+    [angles, center, maxRadius, normalized],
+  );
+  const selected = selectedCategory ? normalized.find(item => item.category === selectedCategory) ?? null : null;
 
-  const handleCategoryPress = useCallback((category: Category) => {
-    if (!interactive) return;
-    setSelectedCategory((current) => current === category ? null : category);
-    onCategoryPress?.(category);
-  }, [interactive, onCategoryPress]);
-
-  const categoryColor = (category: Category) => {
+  const categoryColor = useCallback((category: Category) => {
     const key = `cat${category.charAt(0).toUpperCase()}${category.slice(1)}` as keyof typeof colors;
-    return colors[key] || colors.accent;
+    return colors[key] ?? colors.accent;
+  }, [colors]);
+
+  const selectCategory = (category: Category) => {
+    if (!interactive) return;
+    setSelectedCategory(current => current === category ? null : category);
+    onCategoryPress?.(category);
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.radarWrapper}>
-        <Svg width={RADAR_SIZE} height={RADAR_SIZE} style={styles.radarSvg}>
+    <View
+      accessible
+      accessibilityLabel="Диаграмма характеристик персонажа"
+      onLayout={event => setWidth(event.nativeEvent.layout.width)}
+      style={styles.container}
+    >
+      <View style={{ width: size, height: size, alignSelf: 'center' }}>
+        <Svg width={size} height={size}>
           <G>
-            {GRID_POINTS.map((levelPoints, levelIndex) => (
-              <Path
-                key={`grid-${levelIndex}`}
-                d={pointsToPath(levelPoints)}
-                fill="none"
-                stroke="#1E2128"
-                strokeWidth={StyleSheet.hairlineWidth}
-                opacity={0.8}
-              />
-            ))}
-            {CATEGORIES.map((category, i) => {
-              const outerPoint = AXIS_END_POINTS[i];
+            {Array.from({ length: GRID_LEVELS }, (_, index) => {
+              const radius = maxRadius * ((index + 1) / GRID_LEVELS);
+              return (
+                <Path
+                  key={`grid-${index}`}
+                  d={pointsToPath(angles.map(angle => point(center, radius, angle)))}
+                  fill="none"
+                  stroke={colors.borderSubtle}
+                  strokeWidth={StyleSheet.hairlineWidth}
+                />
+              );
+            })}
+            {angles.map((angle, index) => {
+              const end = point(center, maxRadius + 4, angle);
               return (
                 <Line
-                  key={`axis-${category}`}
-                  x1={CENTER}
-                  y1={CENTER}
-                  x2={outerPoint.x}
-                  y2={outerPoint.y}
-                  stroke={colors.border}
+                  key={`axis-${CATEGORIES[index]}`}
+                  x1={center}
+                  y1={center}
+                  x2={end.x}
+                  y2={end.y}
+                  stroke={colors.borderSubtle}
                   strokeWidth={1}
                 />
               );
             })}
           </G>
-          <Path d={pointsToPath(points)} fill={colors.accent} opacity={0.12} />
-          <Path d={pointsToPath(points)} fill="none" stroke={colors.accent} strokeWidth={2} />
-          {CATEGORIES.map((category, i) => {
-            const point = points[i];
-            const color = categoryColor(category);
-            const selected = selectedCategory === category;
+          <Path d={polygonPath} fill={colors.accent} opacity={0.12} />
+          <Path d={polygonPath} fill="none" stroke={colors.accent} strokeWidth={2.2} />
+          {CATEGORIES.map((category, index) => {
+            const item = normalized[index];
+            const vertex = point(center, maxRadius * item.value, angles[index]);
+            const active = selectedCategory === category;
             return (
               <Circle
-                key={`vertex-${category}`}
-                cx={point.x}
-                cy={point.y}
-                r={selected ? 8 : 6}
-                fill={color}
+                key={category}
+                cx={vertex.x}
+                cy={vertex.y}
+                r={active ? 7 : 5.5}
+                fill={categoryColor(category)}
                 stroke={colors.bg}
                 strokeWidth={2}
-                onPress={() => handleCategoryPress(category)}
+                onPress={() => selectCategory(category)}
               />
             );
           })}
           <G>
-            {CATEGORIES.map((category, i) => {
-              const point = LABEL_POINTS[i];
+            {angles.map((angle, index) => {
+              const label = point(center, labelRadius, angle);
               return (
                 <SvgText
-                  key={`label-${category}`}
-                  x={point.x}
-                  y={point.y}
+                  key={CATEGORIES[index]}
+                  x={label.x}
+                  y={label.y}
                   textAnchor="middle"
                   fill={colors.textSecondary}
                   fontSize={typographyStylesheet.caption.fontSize}
-                  fontWeight="500"
+                  fontWeight="600"
                 >
-                  {CATEGORY_LABELS[category]}
+                  {CATEGORY_LABELS[CATEGORIES[index]]}
                 </SvgText>
               );
             })}
           </G>
         </Svg>
-
-        {selectedData && (
-          <View style={styles.infoPanel}>
-            <View style={styles.infoContent}>
-              <Text style={[typographyStylesheet.section, { color: categoryColor(selectedData.category) }]}>
-                {CATEGORY_LABELS[selectedData.category].toUpperCase()}
-              </Text>
-              <View style={styles.infoRow}>
-                <Text style={[typographyStylesheet.numeric, { color: colors.accent }]}>{selectedData.xp} XP</Text>
-                <View style={styles.infoDivider} />
-                <Text style={[typographyStylesheet.caption, { color: colors.textSecondary }]}>
-                  {selectedData.questsCompleted} квестов
-                </Text>
-                <View style={styles.infoDivider} />
-                <Text style={[typographyStylesheet.caption, { color: selectedData.weeklyChange >= 0 ? colors.success : colors.danger }]}>
-                  {selectedData.weeklyChange >= 0 ? '+' : ''}{selectedData.weeklyChange}% за период
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
       </View>
+      {selected ? (
+        <View style={[styles.info, { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle }]}>
+          <Text style={[typographyStylesheet.bodyStrong, { color: categoryColor(selected.category) }]}>
+            {CATEGORY_LABELS[selected.category]}
+          </Text>
+          <Text style={[typographyStylesheet.caption, { color: colors.textMuted }]}>
+            {selected.xp} XP · {selected.questsCompleted} квестов
+          </Text>
+        </View>
+      ) : (
+        <Text style={[styles.hint, typographyStylesheet.caption, { color: colors.textMuted }]}>Нажми на ось, чтобы увидеть значение</Text>
+      )}
     </View>
   );
 }
 
+function point(center: number, radius: number, angle: number) {
+  return {
+    x: center + radius * Math.cos(angle),
+    y: center + radius * Math.sin(angle),
+  };
+}
+
+function pointsToPath(points: Array<{ x: number; y: number }>) {
+  return points.map((item, index) => `${index === 0 ? 'M' : 'L'} ${item.x.toFixed(1)} ${item.y.toFixed(1)}`).join(' ') + ' Z';
+}
+
 const styles = StyleSheet.create({
-  container: {
-    width: RADAR_SIZE,
-    alignItems: 'center',
-  },
-  radarWrapper: {
-    width: RADAR_SIZE,
-    minHeight: RADAR_SIZE,
-    borderRadius: RADAR_SIZE / 2,
-  },
-  radarSvg: {
-    width: RADAR_SIZE,
-    height: RADAR_SIZE,
-  },
-  infoPanel: {
-    width: '100%',
-    marginTop: SPACING.lg,
-    borderRadius: 16,
-    backgroundColor: '#23262E',
-    borderWidth: 1,
-    borderColor: '#1E2128',
-    overflow: 'hidden',
-  },
-  infoContent: {
-    padding: SPACING.md,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: SPACING.xs,
-  },
-  infoDivider: {
-    width: 1,
-    height: 24,
-    backgroundColor: '#1E2128',
-    marginHorizontal: SPACING.sm,
-  },
+  container: { width: '100%', alignItems: 'center' },
+  info: { width: '100%', marginTop: 4, borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10 },
+  hint: { marginTop: 2, textAlign: 'center' },
 });
 
 export default RadarChart;

@@ -31,7 +31,7 @@ const DIFFICULTY_LABELS: Record<1 | 2 | 3, string> = {
 
 export function NextQuestRow({ quest, onPress }: NextQuestRowProps) {
   const { colors, motion } = useTheme();
-  const { numeric, numericDisplay, caption, body, bodyStrong } = useTheme().typographyStylesheet;
+  const { numeric, caption, body, bodyStrong } = useTheme().typographyStylesheet;
   
   const entranceProgress = useSharedValue(0);
   const pressProgress = useSharedValue(0);

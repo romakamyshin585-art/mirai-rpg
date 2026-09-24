@@ -37,7 +37,7 @@ const CLASS_ICON: Record<string, string> = {
 
 export function PlayerHeader({ name, level, class: charClass, xp, xpForNextLevel, xpIntoLevel }: PlayerHeaderProps) {
   const { colors, motion } = useTheme();
-  const { numeric, numericDisplay, caption, title, secondary } = useTheme().typographyStylesheet;
+  const { numeric, caption, title, secondary } = useTheme().typographyStylesheet;
   const entranceProgress = useSharedValue(0);
 
   React.useEffect(() => {

@@ -320,6 +320,8 @@ export const SPACING_LEGACY = {
   xxl: 32,
 } as const;
 
+export const BOTTOM_NAV_BASE_HEIGHT = 72;
+
 // Legacy COLORS (exact same keys as old theme.ts)
 export const COLORS = {
   bg: '#0E0F12',

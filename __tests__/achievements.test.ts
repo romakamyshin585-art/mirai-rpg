@@ -10,6 +10,7 @@ function emptyCtx(over: Partial<AchievementContext> = {}): AchievementContext {
     category: 'health',
     xpAwarded: 30,
     totalXp: 0,
+    totalCompletions: 0,
     perCategoryCount: { health: 0, knowledge: 0, career: 0, discipline: 0, social: 0 },
     distinctQuestIds: new Set(),
     recentCompletions: [],
@@ -111,16 +112,38 @@ describe('achievement rules', () => {
     expect(ruleTest('evening_zen', emptyCtx({ at: new Date('2026-08-28T15:00:00') }))).toBe(false);
   });
 
-  test('weekend_warrior needs weekend + completion today', () => {
-    // 2026-08-29 is Saturday; completion at 15:00 same day
-    const sat = new Date('2026-08-29T15:00:00');
-    const recSat = { at: sat, category: 'health' as const, questId: 'q-sat', difficulty: 1 };
-    expect(ruleTest('weekend_warrior', emptyCtx({ at: sat, recentCompletions: [recSat] }))).toBe(true);
+  test('first achievements require a completion', () => {
+    expect(ruleTest('first_step', emptyCtx())).toBe(false);
+    expect(ruleTest('first_quest', emptyCtx())).toBe(false);
+    expect(ruleTest('first_step', emptyCtx({ totalCompletions: 1 }))).toBe(true);
+    expect(ruleTest('first_quest', emptyCtx({
+      distinctQuestIds: new Set(['q-first']),
+    }))).toBe(true);
+  });
 
-    // 2026-08-28 is Friday
-    const fri = new Date('2026-08-28T15:00:00');
-    const recFri = { at: fri, category: 'health' as const, questId: 'q-fri', difficulty: 1 };
-    expect(ruleTest('weekend_warrior', emptyCtx({ at: fri, recentCompletions: [recFri] }))).toBe(false);
+  test('weekend_warrior needs 10 quests in the current weekend', () => {
+    const sat = new Date('2026-08-29T15:00:00');
+    const weekend: AchievementContext['recentCompletions'] = [];
+    for (let i = 0; i < 9; i += 1) {
+      weekend.push({ at: sat, category: 'health', questId: `q-${i}`, difficulty: 1 });
+    }
+    expect(ruleTest('weekend_warrior', emptyCtx({ at: sat, recentCompletions: weekend }))).toBe(false);
+    weekend.push({ at: sat, category: 'health', questId: 'q-10', difficulty: 1 });
+    expect(ruleTest('weekend_warrior', emptyCtx({ at: sat, recentCompletions: weekend }))).toBe(true);
+
+    const sunday = new Date('2026-08-30T15:00:00');
+    expect(ruleTest('weekend_warrior', emptyCtx({
+      at: sunday,
+      currentWeekendCompletionCount: 10,
+      recentCompletions: [],
+    }))).toBe(true);
+
+    const friday = new Date('2026-08-28T15:00:00');
+    expect(ruleTest('weekend_warrior', emptyCtx({
+      at: friday,
+      currentWeekendCompletionCount: 10,
+      recentCompletions: [],
+    }))).toBe(false);
   });
 
   test('health_balance needs 7 consecutive health days', () => {
@@ -133,9 +156,11 @@ describe('achievement rules', () => {
     expect(ruleTest('health_balance', emptyCtx({ recentCompletions: recent2 }))).toBe(false);
   });
 
-  test('personal_record_day and category_personal_best never auto-fire', () => {
+  test('personal record achievements require new-record flags', () => {
     expect(ruleTest('personal_record_day', emptyCtx({ xpAwarded: 99999 }))).toBe(false);
     expect(ruleTest('category_personal_best', emptyCtx({ xpAwarded: 99999 }))).toBe(false);
+    expect(ruleTest('personal_record_day', emptyCtx({ isNewPersonalBestDay: true }))).toBe(true);
+    expect(ruleTest('category_personal_best', emptyCtx({ isNewCategoryPersonalBest: true }))).toBe(true);
   });
 });
 

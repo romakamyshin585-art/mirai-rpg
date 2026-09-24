@@ -4,6 +4,7 @@
 
 import type { DbExecutor } from '../db/executor';
 import type { Category } from '../domain/category';
+import { dayKey } from '../domain/time';
 import { uuid } from '../utils/uuid';
 import { nowIso } from '../utils/time';
 
@@ -48,12 +49,19 @@ export class QuestRepo {
    */
   async getByIds(ids: string[]): Promise<QuestRow[]> {
     if (ids.length === 0) return [];
-    const clause = ids.map(() => `id = ?`).join(' OR ');
-    return this.db.all<QuestRow>(
-      `SELECT id, user_id, title, description, category, difficulty, xp_reward, is_system, is_active, created_at
-       FROM quest WHERE (${clause})`,
-      ids,
-    );
+    const unique = [...new Set(ids)];
+    const chunks: QuestRow[][] = [];
+    const chunkSize = 400;
+    for (let index = 0; index < unique.length; index += chunkSize) {
+      const chunk = unique.slice(index, index + chunkSize);
+      const clause = chunk.map(() => `id = ?`).join(' OR ');
+      chunks.push(await this.db.all<QuestRow>(
+        `SELECT id, user_id, title, description, category, difficulty, xp_reward, is_system, is_active, created_at
+         FROM quest WHERE (${clause})`,
+        chunk,
+      ));
+    }
+    return chunks.flat();
   }
 
   /** System quests + user's own quests, active only. */
@@ -96,11 +104,17 @@ export class QuestRepo {
   }
 }
 
+export type CompletionInsert = Omit<CompletionRow, 'id' | 'completed_at'> & { completed_at?: string };
+
 export class CompletionRepo {
   constructor(private readonly db: DbExecutor) {}
 
-  async insert(row: Omit<CompletionRow, 'id' | 'completed_at'>): Promise<CompletionRow> {
-    const r: CompletionRow = { ...row, id: uuid(), completed_at: nowIso() };
+  async insert(row: CompletionInsert): Promise<CompletionRow> {
+    const r: CompletionRow = {
+      ...row,
+      id: uuid(),
+      completed_at: row.completed_at ?? nowIso(),
+    };
     await this.db.exec(
       `INSERT INTO quest_completion (id, quest_id, user_id, category, xp_awarded, dr_multiplier, completed_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -109,7 +123,48 @@ export class CompletionRepo {
     return r;
   }
 
-  /** Count of completions for a user within a single category. */
+  async getById(id: string): Promise<CompletionRow | null> {
+    return this.db.one<CompletionRow>(
+      `SELECT id, quest_id, user_id, category, xp_awarded, dr_multiplier, completed_at
+       FROM quest_completion WHERE id = ?`,
+      [id],
+    );
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const existing = await this.getById(id);
+    if (!existing) return false;
+    await this.db.exec(`DELETE FROM quest_completion WHERE id = ?`, [id]);
+    return true;
+  }
+
+  async listAll(userId: string): Promise<CompletionRow[]> {
+    return this.db.all<CompletionRow>(
+      `SELECT id, quest_id, user_id, category, xp_awarded, dr_multiplier, completed_at
+       FROM quest_completion
+       WHERE user_id = ?
+       ORDER BY completed_at ASC`,
+      [userId],
+    );
+  }
+
+  async listBetween(userId: string, from: string | Date, to: string | Date): Promise<CompletionRow[]> {
+    const fromIso = from instanceof Date ? from.toISOString() : from;
+    const toIso = to instanceof Date ? to.toISOString() : to;
+    return this.db.all<CompletionRow>(
+      `SELECT id, quest_id, user_id, category, xp_awarded, dr_multiplier, completed_at
+       FROM quest_completion
+       WHERE user_id = ? AND completed_at >= ? AND completed_at < ?
+       ORDER BY completed_at ASC`,
+      [userId, fromIso, toIso],
+    );
+  }
+
+  async listForLocalDay(userId: string, localDayKey: string): Promise<CompletionRow[]> {
+    const { fromIso, toIso } = CompletionRepo.localDayRange(localDayKey);
+    return this.listBetween(userId, fromIso, toIso);
+  }
+
   async countByCategory(userId: string, category: Category): Promise<number> {
     const r = await this.db.one<{ cnt: number }>(
       `SELECT COUNT(*) AS cnt FROM quest_completion WHERE user_id = ? AND category = ?`,
@@ -118,7 +173,14 @@ export class CompletionRepo {
     return r?.cnt ?? 0;
   }
 
-  /** Distinct quest ids this user has ever completed. */
+  async countAll(userId: string): Promise<number> {
+    const r = await this.db.one<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM quest_completion WHERE user_id = ?`,
+      [userId],
+    );
+    return r?.cnt ?? 0;
+  }
+
   async distinctQuestIds(userId: string): Promise<string[]> {
     const rows = await this.db.all<{ quest_id: string }>(
       `SELECT DISTINCT quest_id FROM quest_completion WHERE user_id = ?`,
@@ -127,11 +189,6 @@ export class CompletionRepo {
     return rows.map((r) => r.quest_id);
   }
 
-  /**
-   * Recent completions (without join). Caller can enrich with quest difficulty
-   * via `QuestRepo.getById` if needed — we use this pattern to keep
-   * repos simple and SQL portable.
-   */
   async listRecent(userId: string, limit = 200): Promise<CompletionRow[]> {
     return this.db.all<CompletionRow>(
       `SELECT id, quest_id, user_id, category, xp_awarded, dr_multiplier, completed_at
@@ -143,31 +200,57 @@ export class CompletionRepo {
     );
   }
 
-  /** XP earned on a specific day (local). Uses COUNT-then-sum (no COALESCE needed). */
-  async sumXpForDay(userId: string, dayKey: string): Promise<number> {
+  async totalXp(userId: string): Promise<number> {
+    const rows = await this.db.all<{ xp: number }>(
+      `SELECT xp_awarded AS xp FROM quest_completion WHERE user_id = ?`,
+      [userId],
+    );
+    return rows.reduce((sum, row) => sum + Number(row.xp || 0), 0);
+  }
+
+  async sumXpAllTime(userId: string): Promise<number> {
+    return this.totalXp(userId);
+  }
+
+  async sumXpForAllTime(userId: string): Promise<number> {
+    return this.totalXp(userId);
+  }
+
+  async sumXpForDay(userId: string, localDayKey: string): Promise<number> {
+    return this.sumXpForLocalDay(userId, localDayKey);
+  }
+
+  async sumXpForLocalDay(userId: string, localDayKey: string): Promise<number> {
+    const rows = await this.listForLocalDay(userId, localDayKey);
+    return rows.reduce((sum, row) => sum + Number(row.xp_awarded || 0), 0);
+  }
+
+  async sumXpForCategoryForLocalDay(userId: string, category: Category, localDayKey: string): Promise<number> {
+    const rows = await this.listForLocalDay(userId, localDayKey);
+    return rows
+      .filter((row) => row.category === category)
+      .reduce((sum, row) => sum + Number(row.xp_awarded || 0), 0);
+  }
+
+  async sumXpForCategory(userId: string, category: Category): Promise<number> {
     const rows = await this.db.all<{ xp: number }>(
       `SELECT xp_awarded AS xp
        FROM quest_completion
-       WHERE user_id = ? AND substr(completed_at, 1, 10) = ?`,
-      [userId, dayKey],
+       WHERE user_id = ? AND category = ?`,
+      [userId, category],
     );
-    return rows.reduce((s, r) => s + Number(r.xp || 0), 0);
+    return rows.reduce((sum, row) => sum + Number(row.xp || 0), 0);
   }
 
-  /**
-   * UTC bounds for a local day-key (YYYY-MM-DD).
-   * completed_at is stored as UTC ISO, while dayKey() is local.
-   * Comparing substr(completed_at,1,10) to a local dayKey drifts near midnight.
-   * Range comparison on ISO strings is chronological and timezone-correct.
-   */
   static localDayRange(localDayKey: string): { fromIso: string; toIso: string } {
     const fromLocal = new Date(`${localDayKey}T00:00:00`);
-    const toLocal = new Date(`${localDayKey}T00:00:00`);
+    fromLocal.setHours(0, 0, 0, 0);
+    const toLocal = new Date(fromLocal);
     toLocal.setDate(toLocal.getDate() + 1);
+    toLocal.setHours(0, 0, 0, 0);
     return { fromIso: fromLocal.toISOString(), toIso: toLocal.toISOString() };
   }
 
-  /** Count of completions on a local day (no LIMIT dependency). */
   async countForLocalDay(userId: string, localDayKey: string): Promise<number> {
     const { fromIso, toIso } = CompletionRepo.localDayRange(localDayKey);
     const r = await this.db.one<{ cnt: number }>(
@@ -178,45 +261,13 @@ export class CompletionRepo {
     return r?.cnt ?? 0;
   }
 
-  /** XP earned on a local day (no LIMIT dependency). */
-  async sumXpForLocalDay(userId: string, localDayKey: string): Promise<number> {
-    const { fromIso, toIso } = CompletionRepo.localDayRange(localDayKey);
-    const rows = await this.db.all<{ xp: number }>(
-      `SELECT xp_awarded AS xp FROM quest_completion
-       WHERE user_id = ? AND completed_at >= ? AND completed_at < ?`,
-      [userId, fromIso, toIso],
-    );
-    return rows.reduce((s, r) => s + Number(r.xp || 0), 0);
-  }
-
-  /** XP earned for a category on a local day (no LIMIT dependency). */
-  async sumXpForCategoryForLocalDay(userId: string, category: Category, localDayKey: string): Promise<number> {
-    const { fromIso, toIso } = CompletionRepo.localDayRange(localDayKey);
-    const rows = await this.db.all<{ xp: number }>(
-      `SELECT xp_awarded AS xp FROM quest_completion
-       WHERE user_id = ? AND category = ? AND completed_at >= ? AND completed_at < ?`,
-      [userId, category, fromIso, toIso],
-    );
-    return rows.reduce((s, r) => s + Number(r.xp || 0), 0);
-  }
-
-  /** XP earned for a specific category, all-time. */
-  async sumXpForCategory(userId: string, category: Category): Promise<number> {
-    const rows = await this.db.all<{ xp: number }>(
-      `SELECT xp_awarded AS xp
-       FROM quest_completion
-       WHERE user_id = ? AND category = ?`,
-      [userId, category],
-    );
-    return rows.reduce((s, r) => s + Number(r.xp || 0), 0);
-  }
-
-  /** Distinct day keys (YYYY-MM-DD) the user has completed ≥1 quest. */
   async distinctActiveDays(userId: string): Promise<string[]> {
-    const rows = await this.db.all<{ d: string }>(
-      `SELECT DISTINCT substr(completed_at, 1, 10) AS d FROM quest_completion WHERE user_id = ? ORDER BY d ASC`,
-      [userId],
-    );
-    return rows.map((r) => r.d);
+    const rows = await this.listAll(userId);
+    const days = new Set<string>();
+    for (const row of rows) {
+      const at = new Date(row.completed_at);
+      if (!Number.isNaN(at.getTime())) days.add(dayKey(at));
+    }
+    return [...days].sort();
   }
 }

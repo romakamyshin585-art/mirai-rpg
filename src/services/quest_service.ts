@@ -41,6 +41,18 @@ export class QuestService {
     return this.q.getById(id);
   }
 
+  async getStreak(userId: string): Promise<number> {
+    const activeDays = new Set(await this.c.distinctActiveDays(userId));
+    const cursor = new Date();
+    if (!activeDays.has(dayKey(cursor))) cursor.setDate(cursor.getDate() - 1);
+    let streak = 0;
+    while (activeDays.has(dayKey(cursor))) {
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+    return streak;
+  }
+
   async create(userId: string, opts: { title: string; category: Category; difficulty: 1 | 2 | 3; xp_reward: number; description?: string }) {
     return this.q.insert({
       user_id: userId,

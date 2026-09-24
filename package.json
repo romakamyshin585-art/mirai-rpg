@@ -54,6 +54,11 @@
       "/node_modules/",
       "/.scratch-",
       "/.git/"
+    ],
+    "modulePathIgnorePatterns": [
+      "<rootDir>/.scratch-",
+      "<rootDir>/android/",
+      "<rootDir>/dist/"
     ]
   }
 }

@@ -3,6 +3,7 @@ import { UserRepo } from '../src/repos/user_repo';
 import { CharacterRepo, StatRepo } from '../src/repos/character_repo';
 import { QuestRepo, CompletionRepo } from '../src/repos/quest_repo';
 import { AchievementRepo, PersonalBestRepo } from '../src/repos/achievement_repo';
+import { dayKey } from '../src/domain/time';
 
 async function setup() {
   const db = await freshMemoryDb();
@@ -117,7 +118,7 @@ describe('QuestRepo + CompletionRepo', () => {
     expect(new Set(ids).size).toBe(2);
   });
 
-  test('sumXpForCategory and sumXpForDay', async () => {
+  test('completion lifecycle, local day listing and all-time XP', async () => {
     const { user, db } = await setup();
     const qRepo = new QuestRepo(db);
     const cRepo = new CompletionRepo(db);
@@ -125,10 +126,32 @@ describe('QuestRepo + CompletionRepo', () => {
       user_id: null, title: 'A', description: null, category: 'health',
       difficulty: 1, xp_reward: 30, is_system: 1, is_active: 1,
     });
-    await cRepo.insert({ quest_id: q.id, user_id: user.id, category: 'health', xp_awarded: 30, dr_multiplier: 1.0 });
-    // sumXpForCategory uses COALESCE(SUM(...)) — covered by live-SQLite runtime;
-    // here we just verify the row exists and the helper doesn't throw.
-    expect(true).toBe(true);
+    const at = new Date(2026, 7, 28, 12, 0, 0);
+    const row = await cRepo.insert({
+      quest_id: q.id,
+      user_id: user.id,
+      category: 'health',
+      xp_awarded: 30,
+      dr_multiplier: 1,
+      completed_at: at.toISOString(),
+    });
+    const outside = await cRepo.insert({
+      quest_id: q.id,
+      user_id: user.id,
+      category: 'health',
+      xp_awarded: 40,
+      dr_multiplier: 1,
+      completed_at: new Date(2026, 7, 29, 12, 0, 0).toISOString(),
+    });
+    expect((await cRepo.getById(row.id))?.id).toBe(row.id);
+    expect(await cRepo.totalXp(user.id)).toBe(70);
+    expect(await cRepo.sumXpAllTime(user.id)).toBe(70);
+    expect((await cRepo.listForLocalDay(user.id, dayKey(at))).map((item) => item.id)).toEqual([row.id]);
+    expect(await cRepo.delete(row.id)).toBe(true);
+    expect(await cRepo.getById(row.id)).toBeNull();
+    expect(await cRepo.delete(row.id)).toBe(false);
+    expect(await cRepo.totalXp(user.id)).toBe(40);
+    expect(outside.id).toBeTruthy();
   });
 
   test('distinctActiveDays', async () => {
@@ -183,15 +206,30 @@ describe('AchievementRepo + PersonalBestRepo', () => {
     expect(unlocks).toHaveLength(1);
   });
 
+  test('tryUnlock concurrent calls remain idempotent', async () => {
+    const { user, db } = await setup();
+    const aRepo = new AchievementRepo(db);
+    const a = await aRepo.insertDef({ code: 'concurrent', name: 'A', description: 'd', rarity: 'common', icon: '🏆' });
+    const results = await Promise.all([
+      aRepo.tryUnlock(user.id, a.id),
+      aRepo.tryUnlock(user.id, a.id),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(await aRepo.listUnlocks(user.id)).toHaveLength(1);
+  });
+
   test('PersonalBest: first insert + update on higher', async () => {
     const { user, db } = await setup();
     const pb = new PersonalBestRepo(db);
     const now = new Date().toISOString();
     const r1 = await pb.maybeUpdate(user.id, 'day', 50, now);
     expect(r1.value).toBe(50);
-    const r2 = await pb.maybeUpdate(user.id, 'day', 30, now);  // lower
-    expect(r2.value).toBe(50);  // not overwritten
+    expect(r1.isNewRecord).toBe(true);
+    const r2 = await pb.maybeUpdate(user.id, 'day', 30, now);
+    expect(r2.value).toBe(50);
+    expect(r2.isNewRecord).toBe(false);
     const r3 = await pb.maybeUpdate(user.id, 'day', 100, now);
     expect(r3.value).toBe(100);
+    expect(r3.isNewRecord).toBe(true);
   });
 });

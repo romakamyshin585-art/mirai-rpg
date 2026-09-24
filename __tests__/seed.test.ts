@@ -2,6 +2,8 @@ import { freshMemoryDb } from '../src/db';
 import { seedIfEmpty } from '../src/seed';
 import { QuestRepo } from '../src/repos/quest_repo';
 import { AchievementRepo } from '../src/repos/achievement_repo';
+import { RULES } from '../src/domain/achievements';
+import { ACHIEVEMENT_SEED } from '../src/seed/achievements';
 
 describe('seed', () => {
   test('first boot: inserts 76 quests + 17 achievements', async () => {
@@ -49,8 +51,7 @@ describe('seed', () => {
   });
 
   test('no duplicate codes in ACHIEVEMENT_SEED', () => {
-    const { ACHIEVEMENT_SEED } = require('../src/seed/achievements');
-    const codes = ACHIEVEMENT_SEED.map((d: any) => d.code);
+    const codes = ACHIEVEMENT_SEED.map((def) => def.code);
     const unique = new Set(codes);
     expect(unique.size).toBe(codes.length);
   });
@@ -68,16 +69,53 @@ describe('seed', () => {
 
   test('seed on DB with pre-existing achievements: no error, idempotent', async () => {
     const db = await freshMemoryDb();
-    // Manually insert some achievements first (simulating old install)
     const aRepo = new AchievementRepo(db);
-    for (const def of require('../src/seed/achievements').ACHIEVEMENT_SEED) {
+    for (const def of ACHIEVEMENT_SEED) {
       await aRepo.insertDef(def);
     }
-    // Now run seedIfEmpty - should not error, should not duplicate
     const result = await seedIfEmpty(db);
     expect(result.achievementsInserted).toBe(0);
     const cat = await aRepo.listCatalog();
     expect(cat.length).toBe(17);
+  });
+
+  test('catalog codes and rule codes match one to one', async () => {
+    const db = await freshMemoryDb();
+    await seedIfEmpty(db);
+    const catalog = await new AchievementRepo(db).listCatalog();
+    const ruleCodes = RULES.map((rule) => rule.code).sort();
+    const seedCodes = ACHIEVEMENT_SEED.map((def) => def.code).sort();
+    expect(catalog.map((def) => def.code).sort()).toEqual(seedCodes);
+    expect(seedCodes).toEqual(ruleCodes);
+    expect(new Set(catalog.map((def) => def.code)).size).toBe(17);
+  });
+
+  test('partial catalog receives missing achievement definitions', async () => {
+    const db = await freshMemoryDb();
+    const aRepo = new AchievementRepo(db);
+    await aRepo.insertDef(ACHIEVEMENT_SEED[0]!);
+    const result = await seedIfEmpty(db);
+    expect(result.achievementsInserted).toBe(16);
+    expect((await aRepo.listCatalog()).length).toBe(17);
+  });
+
+  test('archived system quest is not reactivated or duplicated', async () => {
+    const db = await freshMemoryDb();
+    const qRepo = new QuestRepo(db);
+    await qRepo.insert({
+      user_id: null,
+      title: 'Archived system',
+      description: null,
+      category: 'health',
+      difficulty: 1,
+      xp_reward: 10,
+      is_system: 1,
+      is_active: 0,
+    });
+    await seedIfEmpty(db);
+    const system = await qRepo.listSystem();
+    expect(system).toHaveLength(1);
+    expect(system[0]?.is_active).toBe(0);
   });
 });
 
