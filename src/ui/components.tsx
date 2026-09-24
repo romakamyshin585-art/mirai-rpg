@@ -8,7 +8,11 @@ function getLucideIcon(name: string) {
   if (!LucideIcons[name]) {
     try {
       const module = require('lucide-react-native');
-      LucideIcons[name] = module[name];
+      const pascalName = name
+        .split('-')
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join('');
+      LucideIcons[name] = module[pascalName] || module[name] || (() => <View style={{ width: 24, height: 24 }} />);
     } catch {
       LucideIcons[name] = () => <View style={{ width: 24, height: 24 }} />;
     }
