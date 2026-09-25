@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import type { AppContext } from '../app_context';
 import type { QuestRow } from '../../repos/quest_repo';
 import { CATEGORIES, type Category } from '../../domain/category';
@@ -60,6 +60,27 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
   const loadedOnce = useRef(false);
   const requestId = useRef(0);
   const latestCompletionByQuest = useRef(new Map<string, string>());
+  // The FAB floats over the list, so it used to sit on top of a card's
+  // "Готово" button while scrolling. It now gets out of the way: hidden
+  // while scrolling down, back as soon as the user scrolls up.
+  const fabVisible = useSharedValue(1);
+  const lastScrollY = useRef(0);
+  const onListScroll = useAnimatedScrollHandler({
+    onScroll: event => {
+      const y = event.contentOffset.y;
+      const delta = y - lastScrollY.current;
+      if (Math.abs(delta) < 4) return;
+      lastScrollY.current = y;
+      fabVisible.value = delta > 0 ? 0 : 1;
+    },
+  });
+  const fabStyle = useAnimatedStyle(() => ({
+    opacity: fabVisible.value,
+    transform: [
+      { scale: 0.85 + fabVisible.value * 0.15 },
+      { translateY: (1 - fabVisible.value) * 12 },
+    ],
+  }));
 
   const reload = useCallback(async () => {
     const currentRequest = ++requestId.current;
@@ -285,6 +306,8 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
           windowSize={7}
           removeClippedSubviews
           showsVerticalScrollIndicator={false}
+          onScroll={onListScroll}
+          scrollEventThrottle={16}
           contentContainerStyle={[
             styles.listContent,
             { paddingBottom: BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 96 },
@@ -328,24 +351,34 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
         />
       )}
 
-      <MotionPressable
-        accessibilityRole="button"
-        accessibilityLabel="Добавить квест"
-        disabled={operationLocked}
-        onPress={() => setShowCreate(true)}
+      <Animated.View
+        pointerEvents="box-none"
         style={[
-          styles.fab,
+          styles.fabHolder,
           {
             right: 16,
             bottom: BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 16,
-            backgroundColor: colors.accent,
-            borderRadius: radius.pill,
-            opacity: operationLocked ? 0.5 : 1,
           },
         ]}
       >
-        <LucideIcon name="plus" size={28} color={colors.textInverse} strokeWidth={2.5} />
-      </MotionPressable>
+        <MotionPressable
+          accessibilityRole="button"
+          accessibilityLabel="Добавить квест"
+          disabled={operationLocked}
+          onPress={() => setShowCreate(true)}
+          style={[
+            styles.fab,
+            {
+              backgroundColor: colors.accent,
+              borderRadius: radius.pill,
+              opacity: operationLocked ? 0.5 : 1,
+            },
+            fabStyle,
+          ]}
+        >
+          <LucideIcon name="plus" size={28} color={colors.textInverse} strokeWidth={2.5} />
+        </MotionPressable>
+      </Animated.View>
 
       <CreateQuestModal visible={showCreate} onClose={() => setShowCreate(false)} onSubmit={createQuest} />
       <FocusModeModal
@@ -602,5 +635,6 @@ const styles = StyleSheet.create({
   completeLabel: { fontFamily: 'Nunito', fontSize: 13, lineHeight: 17, fontWeight: '800' },
   empty: { alignItems: 'center', paddingVertical: 54, paddingHorizontal: 24 },
   emptyIcon: { width: 72, height: 72, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  fab: { position: 'absolute', width: 58, height: 58, alignItems: 'center', justifyContent: 'center', zIndex: 20, elevation: 8 },
+  fabHolder: { position: 'absolute', zIndex: 20, elevation: 8 },
+  fab: { width: 58, height: 58, alignItems: 'center', justifyContent: 'center' },
 });

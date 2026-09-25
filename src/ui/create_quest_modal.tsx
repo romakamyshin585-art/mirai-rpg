@@ -1,22 +1,48 @@
 /**
- * Create-quest modal. Slides up from bottom, dimmed background, form:
- *   - title (text)
- *   - description (text, optional)
- *   - category (5 pills)
- *   - difficulty (3 pills, auto-sets default XP)
- *   - XP (number, editable, defaults from difficulty)
+ * Create-quest sheet.
  *
- * On submit calls quest.create() and closes.
+ * Layout goal (see NIGHT_RUN_REPORT, §3): the whole primary form fits on
+ * a standard phone screen with no scrolling. Title is the only free-text
+ * field up front; category and difficulty are one-row segmented
+ * controls; everything secondary (description, custom XP) lives behind a
+ * collapsed "Дополнительно" disclosure. On wide screens the two short
+ * controls sit side by side.
+ *
+ * Save logic is deliberately untouched by the redesign: the sheet closes
+ * only after the repository write resolves, and a rejection keeps the
+ * form open with the reason shown.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { View, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
-import { H2, Muted, Button, Pill, Text } from './components';
-import { Overlay } from './components/Overlay';
-import { COLORS, CATEGORY_COLORS, CATEGORY_LABELS, FONT, RADIUS, SPACING } from './theme';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CATEGORIES, type Category } from '../domain/category';
+import { CATEGORY_LABELS, useTheme } from './theme';
+import { LucideIcon } from './components';
+import { MotionPressable } from './components/MotionPressable';
+import { Overlay } from './components/Overlay';
 
 const DEFAULT_XP: Record<1 | 2 | 3, number> = { 1: 15, 2: 30, 3: 60 };
+
+const DIFFICULTY_LABELS: Record<1 | 2 | 3, string> = { 1: 'Легко', 2: 'Средне', 3: 'Сложно' };
+
+const CATEGORY_ICONS: Record<Category, string> = {
+  health: 'heart-pulse',
+  knowledge: 'book-open',
+  career: 'briefcase-business',
+  discipline: 'target',
+  social: 'users',
+};
+
+const WIDE_LAYOUT_BREAKPOINT = 600;
 
 type QuestDraft = {
   title: string;
@@ -25,6 +51,8 @@ type QuestDraft = {
   difficulty: 1 | 2 | 3;
   xp_reward: number;
 };
+
+export type CreateQuestData = QuestDraft;
 
 export function CreateQuestModal({
   visible,
@@ -35,11 +63,17 @@ export function CreateQuestModal({
   onClose: () => void;
   onSubmit: (data: QuestDraft) => Promise<void>;
 }) {
+  const { colors, radius, typographyStylesheet: typography } = useTheme();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const wide = width >= WIDE_LAYOUT_BREAKPOINT;
+
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState<Category>('health');
   const [difficulty, setDifficulty] = useState<1 | 2 | 3>(1);
   const [xpText, setXpText] = useState(String(DEFAULT_XP[1]));
+  const [extraOpen, setExtraOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const aliveRef = useRef(true);
@@ -59,24 +93,18 @@ export function CreateQuestModal({
     setCategory('health');
     setDifficulty(1);
     setXpText(String(DEFAULT_XP[1]));
+    setExtraOpen(false);
     setError(null);
     setBusy(false);
   }, [visible]);
 
-  function pickDifficulty(d: 1 | 2 | 3) {
-    setDifficulty(d);
-    setXpText(String(DEFAULT_XP[d]));
+  const categoryColor = colors[`cat${category.charAt(0).toUpperCase()}${category.slice(1)}` as keyof typeof colors];
+
+  function pickDifficulty(next: 1 | 2 | 3) {
+    setDifficulty(next);
+    setXpText(String(DEFAULT_XP[next]));
   }
 
-  /**
-   * Submission is failure-safe by construction:
-   *  - the sheet is only closed after the repository write resolves;
-   *  - any rejection (validation, SQLite, native) is caught, the form
-   *    stays open and usable with the error shown, and `busy` is always
-   *    released;
-   *  - no state is touched after this component unmounts.
-   * There is no path that leaves an empty screen behind.
-   */
   async function submit() {
     if (busy) return;
     setError(null);
@@ -110,98 +138,232 @@ export function CreateQuestModal({
     }
   }
 
+  const controls = (
+    <View style={[styles.controlsRow, wide ? styles.controlsRowWide : null]}>
+      <View style={styles.controlBlock}>
+        <Text style={[typography.caption, { color: colors.textMuted }]}>Ось развития</Text>
+        <View style={[styles.segment, { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, borderRadius: radius.md }]}>
+          {CATEGORIES.map(item => {
+            const tint = colors[`cat${item.charAt(0).toUpperCase()}${item.slice(1)}` as keyof typeof colors];
+            const active = category === item;
+            return (
+              <MotionPressable
+                key={item}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={CATEGORY_LABELS[item]}
+                onPress={() => setCategory(item)}
+                style={[
+                  styles.segmentItem,
+                  {
+                    backgroundColor: active ? `${tint}26` : 'transparent',
+                    borderRadius: radius.sm,
+                  },
+                ]}
+              >
+                <LucideIcon name={CATEGORY_ICONS[item]} size={17} color={active ? tint : colors.textMuted} />
+              </MotionPressable>
+            );
+          })}
+        </View>
+        <Text style={[typography.caption, { color: categoryColor, marginTop: 5 }]}>{CATEGORY_LABELS[category]}</Text>
+      </View>
+
+      <View style={styles.controlBlock}>
+        <Text style={[typography.caption, { color: colors.textMuted }]}>Сложность</Text>
+        <View style={[styles.segment, { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, borderRadius: radius.md }]}>
+          {([1, 2, 3] as const).map(level => {
+            const active = difficulty === level;
+            return (
+              <MotionPressable
+                key={level}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={DIFFICULTY_LABELS[level]}
+                onPress={() => pickDifficulty(level)}
+                style={[
+                  styles.segmentItem,
+                  {
+                    backgroundColor: active ? `${colors.accent}26` : 'transparent',
+                    borderRadius: radius.sm,
+                  },
+                ]}
+              >
+                <Text style={[typography.bodyStrong, { color: active ? colors.accent : colors.textMuted }]}>{level}</Text>
+              </MotionPressable>
+            );
+          })}
+        </View>
+        <Text style={[typography.caption, { color: colors.textMuted, marginTop: 5 }]}>
+          {DIFFICULTY_LABELS[difficulty]} · +{xpText} XP
+        </Text>
+      </View>
+    </View>
+  );
+
   return (
     <Overlay visible={visible} onClose={onClose} align="bottom">
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ width: '100%', justifyContent: 'flex-end' }}
-        pointerEvents="box-none"
-      >
-        <View style={{ backgroundColor: COLORS.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: SPACING.lg, maxHeight: '90%' }}>
-            <View style={{ alignItems: 'center', marginBottom: SPACING.md }}>
-              <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border }} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.sheetWrap} pointerEvents="box-none">
+        <View
+          style={[
+            styles.sheet,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              borderTopLeftRadius: radius.xl,
+              borderTopRightRadius: radius.xl,
+              paddingBottom: insets.bottom + 16,
+            },
+          ]}
+        >
+          <View style={[styles.handle, { backgroundColor: colors.border }]} />
+
+          <View style={styles.headerRow}>
+            <View style={styles.headerCopy}>
+              <Text style={[typography.title, { color: colors.text }]}>Новый квест</Text>
+              <Text style={[typography.caption, { color: colors.textMuted }]}>
+                {CATEGORY_LABELS[category]} · {DIFFICULTY_LABELS[difficulty]}
+              </Text>
             </View>
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <H2>Новый квест</H2>
-              <View style={{ height: SPACING.md }} />
-              <Muted>Название</Muted>
-              <TextInput
-                value={title}
-                onChangeText={setTitle}
-                placeholder="Например: Прогулка 30 мин"
-                placeholderTextColor={COLORS.textDim}
-                style={inputStyle}
-                autoFocus
-              />
-              <View style={{ height: SPACING.md }} />
-              <Muted>Описание (необязательно)</Muted>
+            <MotionPressable
+              accessibilityRole="button"
+              accessibilityLabel="Закрыть"
+              onPress={onClose}
+              disabled={busy}
+              style={[styles.headerClose, { backgroundColor: colors.surfaceElevated, opacity: busy ? 0.5 : 1 }]}
+            >
+              <LucideIcon name="x" size={18} color={colors.textSecondary} />
+            </MotionPressable>
+          </View>
+
+          <TextInput
+            value={title}
+            onChangeText={setTitle}
+            placeholder="Что сделать? Например: прогулка 30 мин"
+            placeholderTextColor={colors.textMuted}
+            style={[
+              styles.titleInput,
+              typography.body,
+              {
+                backgroundColor: colors.surfaceElevated,
+                borderColor: colors.borderSubtle,
+                borderRadius: radius.md,
+                color: colors.text,
+              },
+            ]}
+            maxLength={80}
+            returnKeyType="done"
+            onSubmitEditing={() => void submit()}
+          />
+
+          {controls}
+
+          <MotionPressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: extraOpen }}
+            onPress={() => setExtraOpen(value => !value)}
+            style={styles.disclosure}
+          >
+            <LucideIcon name={extraOpen ? 'chevron-down' : 'chevron-right'} size={16} color={colors.textMuted} />
+            <Text style={[typography.bodyStrong, { color: colors.textSecondary, flex: 1 }]}>Дополнительно</Text>
+            {!extraOpen && description.trim() ? (
+              <Text numberOfLines={1} style={[typography.caption, { color: colors.textMuted, maxWidth: 140 }]}>
+                {description.trim()}
+              </Text>
+            ) : null}
+          </MotionPressable>
+
+          {extraOpen ? (
+            <View style={styles.extraBlock}>
+              <Text style={[typography.caption, { color: colors.textMuted }]}>Описание</Text>
               <TextInput
                 value={description}
                 onChangeText={setDescription}
-                placeholder="Коротко, зачем"
-                placeholderTextColor={COLORS.textDim}
-                style={[inputStyle, { height: 60 }]}
+                placeholder="Коротко, зачем это нужно"
+                placeholderTextColor={colors.textMuted}
+                style={[
+                  styles.extraInput,
+                  typography.body,
+                  {
+                    backgroundColor: colors.surfaceElevated,
+                    borderColor: colors.borderSubtle,
+                    borderRadius: radius.md,
+                    color: colors.text,
+                  },
+                ]}
                 multiline
+                maxLength={240}
               />
-              <View style={{ height: SPACING.md }} />
-              <Muted>Категория</Muted>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginTop: SPACING.xs }}>
-                {CATEGORIES.map((c: Category) => (
-                  <Pill
-                    key={c}
-                    label={CATEGORY_LABELS[c]!}
-                    color={category === c ? CATEGORY_COLORS[c] : COLORS.textMuted}
-                    onPress={() => setCategory(c)}
-                  />
-                ))}
-              </View>
-              <View style={{ height: SPACING.md }} />
-              <Muted>Сложность</Muted>
-              <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.xs }}>
-                {[1, 2, 3].map((d) => {
-                  const dd = d as 1 | 2 | 3;
-                  return (
-                    <Pill
-                      key={d}
-                      label={`${d}/3`}
-                      color={difficulty === dd ? COLORS.accent : COLORS.textMuted}
-                      onPress={() => pickDifficulty(dd)}
-                    />
-                  );
-                })}
-              </View>
-              <View style={{ height: SPACING.md }} />
-              <Muted>XP награда</Muted>
+              <Text style={[typography.caption, { color: colors.textMuted, marginTop: 10 }]}>Своя награда XP</Text>
               <TextInput
                 value={xpText}
                 onChangeText={setXpText}
                 keyboardType="number-pad"
-                style={inputStyle}
+                placeholder={String(DEFAULT_XP[difficulty])}
+                placeholderTextColor={colors.textMuted}
+                style={[
+                  styles.xpInput,
+                  typography.numeric,
+                  {
+                    backgroundColor: colors.surfaceElevated,
+                    borderColor: colors.borderSubtle,
+                    borderRadius: radius.md,
+                    color: colors.text,
+                  },
+                ]}
               />
-              {error ? (
-                <View style={{ marginTop: SPACING.sm }}>
-                  <Text color={COLORS.danger} size={FONT.small}>{error}</Text>
-                </View>
-              ) : null}
-              <View style={{ height: SPACING.lg }} />
-              <Button title={busy ? '...' : 'Создать'} onPress={submit} disabled={busy} />
-              <View style={{ height: SPACING.sm }} />
-              <Button title="Отмена" onPress={onClose} variant="ghost" />
-              <View style={{ height: SPACING.lg }} />
-            </ScrollView>
+            </View>
+          ) : null}
+
+          {error ? (
+            <View style={[styles.errorBox, { backgroundColor: colors.dangerSoft, borderRadius: radius.sm }]}>
+              <LucideIcon name="circle-alert" size={15} color={colors.danger} />
+              <Text style={[typography.caption, { color: colors.danger, flex: 1 }]}>{error}</Text>
+            </View>
+          ) : null}
+
+          <MotionPressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
+            disabled={busy}
+            onPress={() => void submit()}
+            style={[styles.submit, { backgroundColor: colors.accent, borderRadius: radius.md, opacity: busy ? 0.6 : 1 }]}
+          >
+            <LucideIcon name="check" size={18} color={colors.textInverse} strokeWidth={2.6} />
+            <Text style={[styles.submitLabel, { color: colors.textInverse }]}>{busy ? 'Сохраняем…' : 'Создать квест'}</Text>
+          </MotionPressable>
         </View>
       </KeyboardAvoidingView>
     </Overlay>
   );
 }
 
-const inputStyle = {
-  color: COLORS.text,
-  fontSize: FONT.body,
-  backgroundColor: COLORS.card,
-  borderRadius: RADIUS.md,
-  padding: SPACING.md,
-  borderWidth: 1,
-  borderColor: COLORS.border,
-  marginTop: SPACING.xs,
-} as const;
+const styles = StyleSheet.create({
+  sheetWrap: { width: '100%', justifyContent: 'flex-end' },
+  sheet: {
+    width: '100%',
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    paddingHorizontal: 18,
+    paddingTop: 8,
+  },
+  handle: { width: 38, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 12 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  headerCopy: { flex: 1 },
+  headerClose: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  titleInput: { minHeight: 50, paddingHorizontal: 14, borderWidth: 1, marginBottom: 14 },
+  controlsRow: { gap: 12 },
+  controlsRowWide: { flexDirection: 'row', gap: 14 },
+  controlBlock: { flex: 1 },
+  segment: { flexDirection: 'row', gap: 4, padding: 4, borderWidth: 1, marginTop: 6 },
+  segmentItem: { flex: 1, minHeight: 38, alignItems: 'center', justifyContent: 'center' },
+  disclosure: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 42, marginTop: 10 },
+  extraBlock: { marginTop: 2 },
+  extraInput: { minHeight: 64, paddingHorizontal: 14, paddingTop: 10, borderWidth: 1, marginTop: 6, textAlignVertical: 'top' },
+  xpInput: { minHeight: 46, paddingHorizontal: 14, borderWidth: 1, marginTop: 6 },
+  errorBox: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 9, marginTop: 12 },
+  submit: { minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 14 },
+  submitLabel: { fontFamily: 'Nunito', fontSize: 15, fontWeight: '800' },
+});
+
+export default CreateQuestModal;
