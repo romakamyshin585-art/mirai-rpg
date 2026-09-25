@@ -8,6 +8,7 @@
 
 import type { DbExecutor } from '../db/executor';
 import { migrate } from '../db';
+import { sqlText } from '../db/literals';
 import { seedIfEmpty } from '../seed';
 import { getExecutor } from '../db/sqlite';
 import { AuthService } from '../services/auth_service';
@@ -93,18 +94,24 @@ export class AppContext {
    * one, store it, and ensure the matching user row exists. This avoids
    * expo-secure-store entirely: the user's identity is just a row in
    * SQLite, which is the same place everything already lives.
+   *
+   * The INSERT inlines its value as a SQL string literal on purpose.
+   * expo-sqlite 15.x's NativeDatabase silently drops bound parameters for
+   * single-statement INSERT/UPDATE on Android release builds, which made
+   * `value` arrive as NULL and aborted startup with
+   * "NOT NULL constraint failed: config.value" (the whole app showed the
+   * "Ошибка инициализации" screen). The id is app-generated, so inlining
+   * it is safe; `sqlText` escapes quotes defensively anyway.
    */
   private async _ensureUserId(): Promise<string> {
     const row = await this.db.one<{ value: string }>(
-      `SELECT value FROM config WHERE key = ?`,
-      [USER_ID_KEY],
+      `SELECT value FROM config WHERE key = ${sqlText(USER_ID_KEY)}`,
     );
-    let id = row?.value ?? '';
+    let id = typeof row?.value === 'string' ? row.value : '';
     if (!id) {
       id = genUserId();
       await this.db.exec(
-        `INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)`,
-        [USER_ID_KEY, id],
+        `INSERT OR IGNORE INTO config (key, value) VALUES (${sqlText(USER_ID_KEY)}, ${sqlText(id)})`,
       );
     }
     const repo = new UserRepo(this.db);

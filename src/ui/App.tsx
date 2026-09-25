@@ -15,6 +15,7 @@ import { BOTTOM_NAV_BASE_HEIGHT, ThemeProvider, useTheme } from './theme';
 import { useNunitoFonts } from './fonts';
 import { LucideIcon } from './components';
 import { CelebrationOverlay } from './components/CelebrationOverlay';
+import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { MotionPressable } from './components/MotionPressable';
 import { OverlayProvider, useOverlayActivity } from './components/Overlay';
 import { HAPTIC_EVENTS, duration, scale, spring, useHaptics, usePressAnimation, useReducedMotion } from './motion';
@@ -208,7 +209,9 @@ export default function App() {
       <GestureHandlerRootView style={styles.app}>
         <OverlayProvider>
           <ThemeProvider>
-            <AppContent />
+            <AppErrorBoundary>
+              <AppContent />
+            </AppErrorBoundary>
           </ThemeProvider>
         </OverlayProvider>
       </GestureHandlerRootView>
