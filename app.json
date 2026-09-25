@@ -2,7 +2,7 @@
   "expo": {
     "name": "Mirai RPG",
     "slug": "mirai-rpg",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "scheme": "mirairpg",
     "userInterfaceStyle": "dark",
