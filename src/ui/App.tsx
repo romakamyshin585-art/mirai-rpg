@@ -6,7 +6,6 @@ import { BlurView } from 'expo-blur';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppContext } from './app_context';
 import { QuestsScreen } from './screens/quests';
-import { ProfileScreen } from './screens/profile';
 import { AchievementsScreen } from './screens/achievements';
 import { CalendarScreen } from './screens/calendar';
 import { HomeScreen } from './screens/home';
@@ -20,7 +19,7 @@ import { MotionPressable } from './components/MotionPressable';
 import { OverlayProvider, useOverlayActivity } from './components/Overlay';
 import { HAPTIC_EVENTS, duration, scale, spring, useHaptics, usePressAnimation, useReducedMotion } from './motion';
 
-type Tab = 'home' | 'quests' | 'calendar' | 'achievements' | 'profile';
+type Tab = 'home' | 'quests' | 'calendar' | 'achievements';
 
 type ToastState = {
   message: string;
@@ -147,7 +146,12 @@ function AppContent() {
       <View style={styles.screenHost}>
         <ScreenTransition key={tab} tab={tab} direction={transitionDirection}>
           {tab === 'home' ? (
-            <HomeScreen ctx={ctx} revision={revision} onOpenQuests={() => changeTab('quests')} />
+            <HomeScreen
+              ctx={ctx}
+              revision={revision}
+              onOpenQuests={() => changeTab('quests')}
+              onOpenAchievements={() => changeTab('achievements')}
+            />
           ) : tab === 'quests' ? (
             <QuestsScreen
               ctx={ctx}
@@ -179,8 +183,6 @@ function AppContent() {
             />
           ) : tab === 'calendar' ? (
             <CalendarScreen ctx={ctx} revision={revision} onDataChanged={markDataChanged} />
-          ) : tab === 'profile' ? (
-            <ProfileScreen ctx={ctx} revision={revision} onOpenAchievements={() => changeTab('achievements')} />
           ) : (
             <AchievementsScreen ctx={ctx} revision={revision} celebrationCodes={achievementCelebrationCodes} />
           )}
@@ -254,7 +256,6 @@ const TABS: Array<{ key: Tab; icon: string; label: string }> = [
   { key: 'quests', icon: 'square-check-big', label: 'Квесты' },
   { key: 'calendar', icon: 'calendar-days', label: 'Календарь' },
   { key: 'achievements', icon: 'trophy', label: 'Достижения' },
-  { key: 'profile', icon: 'user-round', label: 'Профиль' },
 ];
 
 function BottomTab({ tab, onChange }: { tab: Tab; onChange: (tab: Tab) => void }) {

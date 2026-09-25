@@ -297,78 +297,13 @@ const _NEW_HAPTICS = {
 } as const;
 
 // ============================================================
-// LEGACY API (exact same names/structure as before)
+// BACKWARD-COMPATIBLE EXPORTS
+//
+// These predate the design system above and are kept only where they are
+// still referenced. New code must use useTheme() and the NEW_* tokens.
 // ============================================================
 
-// Legacy SPACING (xs, sm, md, lg, xl, xxl)
-export const SPACING = {
-  xs: 4,
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 24,
-  xxl: 32,
-} as const;
-
-// Legacy SPACING (for backward compatibility)
-export const SPACING_LEGACY = {
-  xs: 4,
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 24,
-  xxl: 32,
-} as const;
-
 export const BOTTOM_NAV_BASE_HEIGHT = 72;
-
-// Legacy COLORS (exact same keys as old theme.ts)
-export const COLORS = {
-  bg: '#0E0F12',
-  card: '#1A1C22',
-  cardElevated: '#23262E',
-  border: '#2E323C',
-  text: '#E6E8EC',
-  textMuted: '#8A8E99',
-  textDim: '#5A5E69',
-  accent: '#F5A524',
-  accentDim: '#7A5212',
-  success: '#22C55E',
-  danger: '#EF4444',
-  warning: '#F59E0B',
-  catHealth: '#F472B6',
-  catKnowledge: '#60A5FA',
-  catCareer: '#F5A524',
-  catDiscipline: '#A78BFA',
-  catSocial: '#34D399',
-} as const;
-
-// Legacy RADIUS
-export const RADIUS = {
-  sm: 6,
-  md: 10,
-  lg: 16,
-  pill: 999,
-} as const;
-
-// Legacy FONT
-export const FONT = {
-  h1: 28,
-  h2: 22,
-  h3: 18,
-  body: 15,
-  small: 13,
-  tiny: 11,
-} as const;
-
-// Legacy CATEGORY_COLORS
-export const CATEGORY_COLORS = {
-  health: COLORS.catHealth,
-  knowledge: COLORS.catKnowledge,
-  career: COLORS.catCareer,
-  discipline: COLORS.catDiscipline,
-  social: COLORS.catSocial,
-} as const;
 
 // Legacy RARITY_COLORS (with index signature for dynamic access)
 export const RARITY_COLORS: Record<string, string> = {
@@ -423,6 +358,26 @@ export const NEW_RARITY_COLORS = {
   legendary: _NEW_COLORS_DARK.rarityLegendary,
 } as const;
 
+/**
+ * StyleSheet-compatible typography.
+ *
+ * Same values as NEW_TYPOGRAPHY, but with `fontVariant` widened to a
+ * mutable array: StyleSheet.create rejects readonly tuples, and screens
+ * spread these straight into styles.
+ */
+export const TYPOGRAPHY_STYLESHEET = {
+  display: { ..._NEW_TYPOGRAPHY.display, fontVariant: ['tabular-nums'] as any },
+  title: { ..._NEW_TYPOGRAPHY.title },
+  section: { ..._NEW_TYPOGRAPHY.section },
+  body: { ..._NEW_TYPOGRAPHY.body },
+  bodyStrong: { ..._NEW_TYPOGRAPHY.bodyStrong },
+  secondary: { ..._NEW_TYPOGRAPHY.secondary },
+  caption: { ..._NEW_TYPOGRAPHY.caption },
+  numeric: { ..._NEW_TYPOGRAPHY.numeric, fontVariant: ['tabular-nums'] as any },
+  numericDisplay: { ..._NEW_TYPOGRAPHY.numericDisplay, fontVariant: ['tabular-nums'] as any },
+  numericSmall: { ..._NEW_TYPOGRAPHY.numericSmall, fontVariant: ['tabular-nums'] as any },
+} as const;
+
 // ============================================================
 // THEME CONTEXT (dynamic color scheme)
 // ============================================================
@@ -472,27 +427,6 @@ export function useTheme() {
   if (!ctx) throw new Error('useTheme must be used within ThemeProvider');
   return ctx;
 }
-
-// ============================================================
-// COMPATIBILITY EXPORTS
-// ============================================================
-
-// Alias for components using legacy SPACING naming
-export const spacing = SPACING_LEGACY;
-
-// StyleSheet-compatible typography (without readonly fontVariant)
-export const TYPOGRAPHY_STYLESHEET = {
-  display: { ..._NEW_TYPOGRAPHY.display, fontVariant: ['tabular-nums'] as any },
-  title: { ..._NEW_TYPOGRAPHY.title },
-  section: { ..._NEW_TYPOGRAPHY.section },
-  body: { ..._NEW_TYPOGRAPHY.body },
-  bodyStrong: { ..._NEW_TYPOGRAPHY.bodyStrong },
-  secondary: { ..._NEW_TYPOGRAPHY.secondary },
-  caption: { ..._NEW_TYPOGRAPHY.caption },
-  numeric: { ..._NEW_TYPOGRAPHY.numeric, fontVariant: ['tabular-nums'] as any },
-  numericDisplay: { ..._NEW_TYPOGRAPHY.numericDisplay, fontVariant: ['tabular-nums'] as any },
-  numericSmall: { ..._NEW_TYPOGRAPHY.numericSmall, fontVariant: ['tabular-nums'] as any },
-} as const;
 
 // ============================================================
 // UTILITIES
