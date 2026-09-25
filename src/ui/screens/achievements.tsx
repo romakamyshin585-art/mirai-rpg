@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, { Easing, Extrapolate, interpolate, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, Extrapolate, interpolate, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
 import type { AchievementDefRow, Rarity } from '../../repos/achievement_repo';
 import type { UnlockedAchievement } from '../../services/achievement_service';
 import { BOTTOM_NAV_BASE_HEIGHT, RARITY_COLORS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
-import { Overlay } from '../components/Overlay';
+import { Overlay, type MorphOrigin } from '../components/Overlay';
 import { MotionPressable } from '../components/MotionPressable';
 import { MotionProgressBar } from '../components/MotionProgressBar';
 import { duration, spring, useReducedMotion, useScrollHeader } from '../motion';
@@ -60,6 +60,11 @@ export function AchievementsScreen({ ctx, revision, celebrationCodes }: Achievem
   const [unlocked, setUnlocked] = useState<UnlockedAchievement[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [selected, setSelected] = useState<AchievementItem | null>(null);
+  const [morphOrigin, setMorphOrigin] = useState<MorphOrigin | undefined>(undefined);
+  // Shared by the tapped tile and the panel it opens, so the tile and the
+  // card move as one object instead of two independent animations.
+  const detailProgress = useSharedValue(0);
+  const cardRefs = useRef(new Map<string, View>());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,6 +105,24 @@ export function AchievementsScreen({ ctx, revision, celebrationCodes }: Achievem
     await reload();
     setRefreshing(false);
   };
+
+  /** Measure the tapped tile so the card unfolds from exactly that tile. */
+  const openDetail = useCallback((item: AchievementItem) => {
+    const node = cardRefs.current.get(item.code);
+    setSelected(item);
+    if (!node) {
+      setMorphOrigin(undefined);
+      return;
+    }
+    try {
+      node.measureInWindow((x, y, width, height) => {
+        const size = Math.min(width, height);
+        setMorphOrigin(size > 0 ? { x, y, size } : undefined);
+      });
+    } catch {
+      setMorphOrigin(undefined);
+    }
+  }, []);
 
   const items = useMemo<AchievementItem[]>(() => {
     const byCode = new Map(unlocked.map(item => [item.code, item]));
@@ -204,17 +227,39 @@ export function AchievementsScreen({ ctx, revision, celebrationCodes }: Achievem
               key={item.code}
               item={item}
               celebrating={unlockedCelebrationCodes.includes(item.code)}
-              onPress={() => setSelected(item)}
+              onPress={() => openDetail(item)}
+              cardRef={node => {
+                if (node) cardRefs.current.set(item.code, node);
+                else cardRefs.current.delete(item.code);
+              }}
+              progress={detailProgress}
             />
           ))}
         </View>
       </Animated.ScrollView>
-      <AchievementDetails item={selected} onClose={() => setSelected(null)} />
+      <AchievementDetails
+        item={selected}
+        onClose={() => setSelected(null)}
+        morphOrigin={morphOrigin}
+        sharedProgress={detailProgress}
+      />
     </>
   );
 }
 
-function AchievementCard({ item, celebrating, onPress }: { item: AchievementItem; celebrating: boolean; onPress: () => void }) {
+function AchievementCard({
+  item,
+  celebrating,
+  onPress,
+  cardRef,
+  progress,
+}: {
+  item: AchievementItem;
+  celebrating: boolean;
+  onPress: () => void;
+  cardRef: (node: View | null) => void;
+  progress: SharedValue<number>;
+}) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const reduced = useReducedMotion();
   const rarityColor = RARITY_COLORS[item.rarity] ?? colors.textMuted;
@@ -242,7 +287,14 @@ function AchievementCard({ item, celebrating, onPress }: { item: AchievementItem
 
   const shellStyle = useAnimatedStyle(() => ({
     opacity: reveal.value,
-    transform: reduced ? [] : [{ scale: interpolate(celebrationProgress.value, [0.8, 1, 1.12], [0.98, 1, 1.04], Extrapolate.CLAMP) }],
+    transform: reduced
+      ? []
+      : [
+          { scale: interpolate(celebrationProgress.value, [0.8, 1, 1.12], [0.98, 1, 1.04], Extrapolate.CLAMP) },
+          // The tile that opened the panel sinks back as it expands, so
+          // the card visibly grows out of the tile the user tapped.
+          { scale: interpolate(progress.value, [0, 1], [1, 0.96], Extrapolate.CLAMP) },
+        ],
   }));
   const iconStyle = useAnimatedStyle(() => ({
     transform: reduced ? [] : [{ scale: celebrationProgress.value }, { rotate: `${interpolate(celebrationProgress.value, [0.8, 1, 1.12], [-3, 0, 3], Extrapolate.CLAMP)}deg` }],
@@ -250,7 +302,7 @@ function AchievementCard({ item, celebrating, onPress }: { item: AchievementItem
   const glowStyle = useAnimatedStyle(() => ({ opacity: glow.value }));
 
   return (
-    <Animated.View style={[styles.cardShell, shellStyle]}>
+    <Animated.View ref={cardRef} collapsable={false} style={[styles.cardShell, shellStyle]}>
       <MotionPressable
         accessibilityRole="button"
         accessibilityLabel={`${item.name}, ${item.isUnlocked ? 'открыто' : 'закрыто'}`}
@@ -311,12 +363,28 @@ function FilterButton({ label, count, active, onPress }: { label: string; count:
   );
 }
 
-function AchievementDetails({ item, onClose }: { item: AchievementItem | null; onClose: () => void }) {
+function AchievementDetails({
+  item,
+  onClose,
+  morphOrigin,
+  sharedProgress,
+}: {
+  item: AchievementItem | null;
+  onClose: () => void;
+  morphOrigin?: MorphOrigin;
+  sharedProgress: SharedValue<number>;
+}) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const rarityColor = item ? RARITY_COLORS[item.rarity] ?? colors.textMuted : colors.textMuted;
 
   return (
-    <Overlay visible={item !== null} onClose={onClose} align="center">
+    <Overlay
+      visible={item !== null}
+      onClose={onClose}
+      align="center"
+      morphOrigin={morphOrigin}
+      sharedProgress={sharedProgress}
+    >
       {item ? (
         <View style={[styles.detail, { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.xl }]}>
           <ScrollView

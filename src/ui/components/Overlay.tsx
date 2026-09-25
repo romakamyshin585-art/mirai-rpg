@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { BackHandler, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
+import { BackHandler, Pressable, StyleSheet, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { Easing, Extrapolate, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, Extrapolate, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { duration, spring, useReducedMotion } from '../motion';
 
@@ -34,7 +34,22 @@ type OverlayProps = {
   onClose: () => void;
   children: ReactNode;
   align?: 'center' | 'bottom';
+  /**
+   * Screen position and size of the icon that opened this panel. When
+   * given, the panel unfolds out of that point instead of sliding in
+   * from the edge, so the trigger and the panel read as one gesture.
+   */
+  morphOrigin?: MorphOrigin;
+  /**
+   * Externally owned 0..1 progress. Pass the same shared value that
+   * drives the trigger icon's rotation/scale: one value then animates
+   * both halves of an icon-to-panel transition, and the reverse starts
+   * from wherever the interrupted animation happened to be.
+   */
+  sharedProgress?: SharedValue<number>;
 };
+
+export type MorphOrigin = { x: number; y: number; size: number };
 
 /**
  * Shared modal/sheet surface.
@@ -57,16 +72,25 @@ type OverlayProps = {
  *    scrollable children inside them actually scroll (see
  *    `bottomMaxHeight`).
  */
-export function Overlay({ visible, onClose, children, align = 'center' }: OverlayProps) {
+export function Overlay({
+  visible,
+  onClose,
+  children,
+  align = 'center',
+  morphOrigin,
+  sharedProgress,
+}: OverlayProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const reduced = useReducedMotion();
   const [mounted, setMounted] = useState(visible);
-  const progress = useSharedValue(visible ? 1 : 0);
+  const ownProgress = useSharedValue(visible ? 1 : 0);
+  const progress = sharedProgress ?? ownProgress;
   const dragY = useSharedValue(0);
   const aliveRef = useRef(true);
   const closingRef = useRef(false);
   const notifiedRef = useRef(false);
+  const [frame, setFrame] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const { acquire, release } = useContext(OverlayContext);
 
   // A bottom sheet is laid out inside an auto-height wrapper, so a
@@ -76,6 +100,28 @@ export function Overlay({ visible, onClose, children, align = 'center' }: Overla
   // resolvable, and gives scrollable children something to shrink
   // against.
   const bottomMaxHeight = Math.max(240, windowHeight - insets.top - 24);
+
+  /**
+   * Where the panel has to travel to line up with the trigger icon, and
+   * how small it starts. `frame` comes from onLayout, which runs on the
+   * UI thread, so the offsets stay in sync with the actual layout instead
+   * of a guess based on a fixed anchor.
+   */
+  const morph = useMemo(() => {
+    if (!morphOrigin || frame.width <= 0 || frame.height <= 0) return null;
+    const originCenterX = morphOrigin.x + morphOrigin.size / 2;
+    const originCenterY = morphOrigin.y + morphOrigin.size / 2;
+    const contentCenterX = frame.x + frame.width / 2;
+    const contentCenterY = frame.y + frame.height / 2;
+    return {
+      dx: originCenterX - contentCenterX,
+      dy: originCenterY - contentCenterY,
+      scale: Math.max(
+        0.1,
+        Math.min(1, morphOrigin.size / Math.max(frame.width, frame.height)),
+      ),
+    };
+  }, [frame, morphOrigin]);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -171,19 +217,43 @@ export function Overlay({ visible, onClose, children, align = 'center' }: Overla
   }));
 
   const contentStyle = useAnimatedStyle(() => {
+    const p = progress.value;
+    if (reduced) {
+      // Reduce Motion: a short fade, no morph, no travel.
+      return { opacity: p, transform: [] };
+    }
+    if (morph) {
+      // Unfold out of the trigger icon. One progress value, one gesture.
+      return {
+        opacity: interpolate(p, [0, 0.4, 1], [0, 1, 1], Extrapolate.CLAMP),
+        transform: [
+          { translateX: morph.dx * (1 - p) },
+          { translateY: morph.dy * (1 - p) },
+          { scale: interpolate(p, [0, 1], [morph.scale, 1], Extrapolate.CLAMP) },
+        ],
+      };
+    }
     if (align === 'bottom') {
       return {
-        opacity: progress.value,
-        transform: reduced
-          ? []
-          : [{ translateY: interpolate(progress.value, [0, 1], [360, 0], Extrapolate.CLAMP) + dragY.value }],
+        opacity: p,
+        transform: [{ translateY: interpolate(p, [0, 1], [360, 0], Extrapolate.CLAMP) + dragY.value }],
       };
     }
     return {
-      opacity: progress.value,
-      transform: reduced ? [] : [{ scale: interpolate(progress.value, [0, 1], [0.94, 1], Extrapolate.CLAMP) }],
+      opacity: p,
+      transform: [{ scale: interpolate(p, [0, 1], [0.94, 1], Extrapolate.CLAMP) }],
     };
   });
+
+  const handleContentLayout = useCallback((event: LayoutChangeEvent) => {
+    const { x, y, width, height } = event.nativeEvent.layout;
+    setFrame(current => {
+      if (current.x === x && current.y === y && current.width === width && current.height === height) {
+        return current;
+      }
+      return { x, y, width, height };
+    });
+  }, []);
 
   if (!mounted) return null;
 
@@ -205,6 +275,7 @@ export function Overlay({ visible, onClose, children, align = 'center' }: Overla
       <GestureDetector gesture={panGesture}>
         <Animated.View
           pointerEvents="box-none"
+          onLayout={handleContentLayout}
           style={[
             align === 'center' ? styles.centerContent : styles.bottomContent,
             align === 'bottom' ? { maxHeight: bottomMaxHeight } : null,

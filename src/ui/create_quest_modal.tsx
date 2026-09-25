@@ -24,11 +24,12 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { SharedValue } from 'react-native-reanimated';
 import { CATEGORIES, type Category } from '../domain/category';
 import { CATEGORY_LABELS, useTheme } from './theme';
 import { LucideIcon } from './components';
 import { MotionPressable } from './components/MotionPressable';
-import { Overlay } from './components/Overlay';
+import { Overlay, type MorphOrigin } from './components/Overlay';
 
 const DEFAULT_XP: Record<1 | 2 | 3, number> = { 1: 15, 2: 30, 3: 60 };
 
@@ -58,10 +59,16 @@ export function CreateQuestModal({
   visible,
   onClose,
   onSubmit,
+  morphOrigin,
+  sharedProgress,
 }: {
   visible: boolean;
   onClose: () => void;
   onSubmit: (data: QuestDraft) => Promise<void>;
+  /** Screen position of the "+" button, so the sheet unfolds from it. */
+  morphOrigin?: MorphOrigin;
+  /** Shared with the "+" button so both animate from one value. */
+  sharedProgress?: SharedValue<number>;
 }) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const insets = useSafeAreaInsets();
@@ -202,7 +209,7 @@ export function CreateQuestModal({
   );
 
   return (
-    <Overlay visible={visible} onClose={onClose} align="bottom">
+    <Overlay visible={visible} onClose={onClose} align="bottom" morphOrigin={morphOrigin} sharedProgress={sharedProgress}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.sheetWrap} pointerEvents="box-none">
         <View
           style={[

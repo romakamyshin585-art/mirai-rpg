@@ -12,6 +12,8 @@ export const spring = {
   sheet: { damping: 22, stiffness: 180, mass: 1 },
   card: { damping: 16, stiffness: 260, mass: 1 },
   celebration: { damping: 10, stiffness: 150, mass: 1 },
+  /** icon-morph: a panel unfolding out of its trigger icon. */
+  morph: { damping: 18, stiffness: 210, mass: 1 },
 } as const;
 
 export const scale = {

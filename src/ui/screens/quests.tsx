@@ -7,6 +7,7 @@ import type { QuestRow } from '../../repos/quest_repo';
 import { CATEGORIES, type Category } from '../../domain/category';
 import { BOTTOM_NAV_BASE_HEIGHT, CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
+import type { MorphOrigin } from '../components/Overlay';
 import { CreateQuestModal } from '../create_quest_modal';
 import { FocusModeModal } from '../components/FocusModeModal';
 import { MotionPressable } from '../components/MotionPressable';
@@ -55,6 +56,11 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
   const [busy, setBusy] = useState<string | null>(null);
   const [undoing, setUndoing] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [morphOrigin, setMorphOrigin] = useState<MorphOrigin | undefined>(undefined);
+  // One shared value drives both the FAB icon and the sheet it opens, so
+  // the two halves of the transition cannot drift apart.
+  const createProgress = useSharedValue(0);
+  const fabHolderRef = useRef<View>(null);
   const [focusQuest, setFocusQuest] = useState<QuestRow | null>(null);
   const [completedIds, setCompletedIds] = useState<Set<string>>(() => new Set());
   const loadedOnce = useRef(false);
@@ -81,6 +87,29 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
       { translateY: (1 - fabVisible.value) * 12 },
     ],
   }));
+  const fabIconStyle = useAnimatedStyle(() => ({
+    // "+" rotating into "x" as the sheet unfolds out of it.
+    transform: [{ rotate: `${45 * (1 - createProgress.value)}deg` }],
+  }));
+
+  /** Measure the FAB so the sheet can unfold from exactly that point. */
+  const openCreate = useCallback(() => {
+    const node = fabHolderRef.current;
+    if (!node) {
+      setShowCreate(true);
+      return;
+    }
+    try {
+      node.measureInWindow((x, y, width, height) => {
+        const size = Math.max(width, height);
+        setMorphOrigin(size > 0 ? { x, y, size } : undefined);
+        setShowCreate(true);
+      });
+    } catch {
+      setMorphOrigin(undefined);
+      setShowCreate(true);
+    }
+  }, []);
 
   const reload = useCallback(async () => {
     const currentRequest = ++requestId.current;
@@ -353,6 +382,8 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
 
       <Animated.View
         pointerEvents="box-none"
+        ref={fabHolderRef}
+        collapsable={false}
         style={[
           styles.fabHolder,
           {
@@ -365,7 +396,7 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
           accessibilityRole="button"
           accessibilityLabel="Добавить квест"
           disabled={operationLocked}
-          onPress={() => setShowCreate(true)}
+          onPress={openCreate}
           style={[
             styles.fab,
             {
@@ -376,11 +407,19 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
             fabStyle,
           ]}
         >
-          <LucideIcon name="plus" size={28} color={colors.textInverse} strokeWidth={2.5} />
+          <Animated.View style={fabIconStyle}>
+            <LucideIcon name="plus" size={28} color={colors.textInverse} strokeWidth={2.5} />
+          </Animated.View>
         </MotionPressable>
       </Animated.View>
 
-      <CreateQuestModal visible={showCreate} onClose={() => setShowCreate(false)} onSubmit={createQuest} />
+      <CreateQuestModal
+        visible={showCreate}
+        onClose={() => setShowCreate(false)}
+        onSubmit={createQuest}
+        morphOrigin={morphOrigin}
+        sharedProgress={createProgress}
+      />
       <FocusModeModal
         visible={focusQuest !== null}
         quest={focusQuest}
