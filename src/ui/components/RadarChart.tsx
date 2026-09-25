@@ -5,8 +5,21 @@ import { Circle, Defs, G, Line, LinearGradient, Path, Polygon, RadialGradient, S
 import { CATEGORIES, type Category } from '../../domain/category';
 import { CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
-import { duration, spring } from '../motion';
-import { useReducedMotion } from '../motion';
+import { duration, spring, useReducedMotion } from '../motion';
+import {
+  BADGE_SIZE,
+  GRID_LEVELS,
+  LABEL_WIDTH,
+  MIN_BOX,
+  axisPoints,
+  badgeAnchor,
+  computeRadarGeometry,
+  gradientRadius,
+  labelAnchor,
+  point,
+  polygonPath,
+  serializePoints,
+} from './radar_geometry';
 
 export type RadarData = {
   category: Category;
@@ -20,7 +33,6 @@ type RadarChartProps = {
   data: RadarData[];
 };
 
-type Point = { x: number; y: number };
 type DayValues = Record<Category, number>;
 
 const CATEGORY_ICONS: Record<Category, string> = {
@@ -31,9 +43,6 @@ const CATEGORY_ICONS: Record<Category, string> = {
   social: 'users',
 };
 
-const GRID_LEVELS = 4;
-const BADGE_SIZE = 48;
-const ANGLE_OFFSET = -Math.PI / 2;
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -42,14 +51,9 @@ export function RadarChart({ data }: RadarChartProps) {
   const reduced = useReducedMotion();
   const [width, setWidth] = useState(0);
   const [pulseIndex, setPulseIndex] = useState(-1);
-  const size = width > 0 ? Math.min(width, 320) : 280;
-  const center = size / 2;
-  const maxRadius = size * 0.25;
-  const badgeRadius = maxRadius + 34;
-  const angles = useMemo(
-    () => CATEGORIES.map((_, index) => ANGLE_OFFSET + (index / CATEGORIES.length) * 2 * Math.PI),
-    [],
-  );
+  const pulse = useSharedValue(0);
+  const previousValues = useRef<DayValues | null>(null);
+
   const normalized = useMemo(
     () => CATEGORIES.map(category => data.find(item => item.category === category) ?? {
       category,
@@ -60,41 +64,42 @@ export function RadarChart({ data }: RadarChartProps) {
     }),
     [data],
   );
-  const points = useMemo(
-    () => normalized.map((item, index) => {
-      const value = Math.max(0, Math.min(1, Number(item.value) || 0));
-      return point(center, maxRadius * value, angles[index]);
-    }),
-    [angles, center, maxRadius, normalized],
-  );
+  const ratios = useMemo(() => normalized.map(item => Number(item.value) || 0), [normalized]);
+
+  // Single source of truth for every coordinate below: grid, polygon,
+  // vertices, badges and labels are all derived from this.
+  const geometry = useMemo(() => computeRadarGeometry(width, CATEGORIES.length), [width]);
+  const { box, center, maxRadius, angles } = geometry;
+
+  const points = useMemo(() => axisPoints(geometry, ratios), [geometry, ratios]);
   const flatPoints = useMemo(() => points.flatMap(item => [item.x, item.y]), [points]);
+
   const fromPoints = useSharedValue(flatPoints);
   const toPoints = useSharedValue(flatPoints);
-  const currentPoints = useSharedValue(flatPoints);
   const transition = useSharedValue(1);
   const reveal = useSharedValue(0);
-  const pulse = useSharedValue(0);
-  const previousValues = useRef<DayValues | null>(null);
 
   useAnimatedReaction(
     () => transition.value,
     progress => {
-      currentPoints.value = interpolateFlat(fromPoints.value, toPoints.value, progress);
+      // Keep the live geometry in sync even when a transition is
+      // interrupted, so vertices never lag a frame behind the fill.
+      toPoints.value = interpolateFlat(fromPoints.value, toPoints.value, progress);
     },
   );
 
   useEffect(() => {
     const next = flatPoints;
-    fromPoints.value = currentPoints.value;
+    fromPoints.value = interpolateFlat(fromPoints.value, toPoints.value, transition.value);
     toPoints.value = next;
     transition.value = reduced ? withTiming(1, { duration: duration.standard }) : withSpring(1, spring.card);
-  }, [currentPoints, flatPoints, fromPoints, reduced, toPoints, transition]);
+  }, [flatPoints, fromPoints, reduced, toPoints, transition]);
 
   useEffect(() => {
     reveal.value = reduced
       ? withTiming(1, { duration: duration.reducedMotion, easing: Easing.out(Easing.cubic) })
       : withSpring(1, spring.card);
-  }, [reduced, reveal, size]);
+  }, [reduced, reveal, box]);
 
   useEffect(() => {
     const values = Object.fromEntries(normalized.map(item => [item.category, Number(item.value) || 0])) as DayValues;
@@ -126,6 +131,8 @@ export function RadarChart({ data }: RadarChartProps) {
     return colors[key] ?? colors.accent;
   };
 
+  const ready = width > 0;
+
   return (
     <View
       accessibilityLabel="Диаграмма характеристик персонажа"
@@ -133,98 +140,121 @@ export function RadarChart({ data }: RadarChartProps) {
       style={styles.container}
     >
       <Animated.View style={[styles.chart, chartStyle]}>
-        <View style={{ width: size, height: size + 28 }}>
-          <Svg width={size} height={size} pointerEvents="none">
-            <Defs>
-              <LinearGradient id="radarGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <Stop offset="0%" stopColor="#EC4899" stopOpacity="0.96" />
-                <Stop offset="48%" stopColor="#8B5CF6" stopOpacity="0.9" />
-                <Stop offset="100%" stopColor="#3B82F6" stopOpacity="0.94" />
-              </LinearGradient>
-              <RadialGradient id="radarCore" cx="58%" cy="58%" r="68%">
-                <Stop offset="0%" stopColor="#F59E0B" stopOpacity="0.72" />
-                <Stop offset="42%" stopColor="#A855F7" stopOpacity="0.64" />
-                <Stop offset="100%" stopColor="#2563EB" stopOpacity="0.12" />
-              </RadialGradient>
-            </Defs>
-            <Circle
-              cx={center}
-              cy={center}
-              r={maxRadius + 9}
-              fill="none"
-              stroke={colors.catDiscipline}
-              strokeOpacity={0.18}
-              strokeWidth={1}
-            />
-            {Array.from({ length: GRID_LEVELS }, (_, index) => {
-              const radius = maxRadius * ((index + 1) / GRID_LEVELS);
-              return (
-                <Polygon
-                  key={`grid-${index}`}
-                  points={serializePoints(angles.map(angle => point(center, radius, angle)))}
-                  fill="none"
-                  stroke={colors.catDiscipline}
-                  strokeOpacity={0.24}
-                  strokeWidth={1}
-                />
-              );
-            })}
-            <G>
-              {angles.map((angle, index) => {
-                const end = point(center, maxRadius, angle);
+        <View style={{ width: box, height: box }}>
+          {ready ? (
+            <Svg
+              width={box}
+              height={box}
+              viewBox={`0 0 ${box} ${box}`}
+              pointerEvents="none"
+            >
+              <Defs>
+                {/* userSpaceOnUse: the gradient is sized from the chart
+                    geometry, never from the painted shape's bounding
+                    box, so it can never resolve to radius 0. */}
+                <LinearGradient
+                  id="radarGradient"
+                  gradientUnits="userSpaceOnUse"
+                  x1={0}
+                  y1={0}
+                  x2={box}
+                  y2={box}
+                >
+                  <Stop offset="0%" stopColor="#EC4899" stopOpacity="0.96" />
+                  <Stop offset="48%" stopColor="#8B5CF6" stopOpacity="0.9" />
+                  <Stop offset="100%" stopColor="#3B82F6" stopOpacity="0.94" />
+                </LinearGradient>
+                <RadialGradient
+                  id="radarCore"
+                  gradientUnits="userSpaceOnUse"
+                  cx={center}
+                  cy={center}
+                  r={gradientRadius(geometry)}
+                >
+                  <Stop offset="0%" stopColor="#F59E0B" stopOpacity="0.7" />
+                  <Stop offset="42%" stopColor="#A855F7" stopOpacity="0.62" />
+                  <Stop offset="100%" stopColor="#2563EB" stopOpacity="0.12" />
+                </RadialGradient>
+              </Defs>
+              <Circle
+                cx={center}
+                cy={center}
+                r={maxRadius + 9}
+                fill="none"
+                stroke={colors.catDiscipline}
+                strokeOpacity={0.18}
+                strokeWidth={1}
+              />
+              {Array.from({ length: GRID_LEVELS }, (_, index) => {
+                const radius = maxRadius * ((index + 1) / GRID_LEVELS);
                 return (
-                  <Line
-                    key={CATEGORIES[index]}
-                    x1={center}
-                    y1={center}
-                    x2={end.x}
-                    y2={end.y}
+                  <Polygon
+                    key={`grid-${index}`}
+                    points={serializePoints(angles.map(angle => point(center, radius, angle)))}
+                    fill="none"
                     stroke={colors.catDiscipline}
-                    strokeOpacity={0.2}
+                    strokeOpacity={0.24}
                     strokeWidth={1}
                   />
                 );
               })}
-            </G>
-            <AnimatedPath animatedProps={outerAnimatedProps} d={pathFromPoints(flatPoints, center, 1)} fill="url(#radarGradient)" opacity={0.82} />
-            <AnimatedPath animatedProps={outerAnimatedProps} d={pathFromPoints(flatPoints, center, 1)} fill="url(#radarCore)" opacity={0.68} />
-            <AnimatedPath
-              animatedProps={outerAnimatedProps}
-              d={pathFromPoints(flatPoints, center, 1)}
-              fill="none"
-              stroke="#C4B5FD"
-              strokeOpacity={0.92}
-              strokeWidth={2}
-              strokeLinejoin="round"
-            />
-            <AnimatedPath
-              animatedProps={innerAnimatedProps}
-              d={pathFromPoints(flatPoints, center, 0.52)}
-              fill="#2563EB"
-              fillOpacity={0.2}
-              stroke="#93C5FD"
-              strokeOpacity={0.42}
-              strokeWidth={1}
-              strokeLinejoin="round"
-            />
-            {CATEGORIES.map((category, index) => (
-              <RadarVertex
-                key={category}
-                category={category}
-                index={index}
-                fromPoints={fromPoints}
-                toPoints={toPoints}
-                progress={transition}
-                color={colorForCategory(category)}
-                backgroundColor={colors.bg}
+              <G>
+                {angles.map((angle, index) => {
+                  const end = point(center, maxRadius, angle);
+                  return (
+                    <Line
+                      key={CATEGORIES[index]}
+                      x1={center}
+                      y1={center}
+                      x2={end.x}
+                      y2={end.y}
+                      stroke={colors.catDiscipline}
+                      strokeOpacity={0.2}
+                      strokeWidth={1}
+                    />
+                  );
+                })}
+              </G>
+              <AnimatedPath animatedProps={outerAnimatedProps} d={polygonPath(flatPoints, center, 1)} fill="url(#radarGradient)" opacity={0.8} />
+              <AnimatedPath animatedProps={outerAnimatedProps} d={polygonPath(flatPoints, center, 1)} fill="url(#radarCore)" opacity={0.66} />
+              <AnimatedPath
+                animatedProps={outerAnimatedProps}
+                d={polygonPath(flatPoints, center, 1)}
+                fill="none"
+                stroke="#C4B5FD"
+                strokeOpacity={0.92}
+                strokeWidth={2}
+                strokeLinejoin="round"
               />
-            ))}
-            <Circle cx={center} cy={center} r={2.5} fill="#F8FAFC" fillOpacity={0.9} />
-          </Svg>
+              <AnimatedPath
+                animatedProps={innerAnimatedProps}
+                d={polygonPath(flatPoints, center, 0.52)}
+                fill="#2563EB"
+                fillOpacity={0.2}
+                stroke="#93C5FD"
+                strokeOpacity={0.42}
+                strokeWidth={1}
+                strokeLinejoin="round"
+              />
+              {CATEGORIES.map((category, index) => (
+                <RadarVertex
+                  key={category}
+                  index={index}
+                  fromPoints={fromPoints}
+                  toPoints={toPoints}
+                  progress={transition}
+                  color={colorForCategory(category)}
+                  backgroundColor={colors.bg}
+                />
+              ))}
+              <Circle cx={center} cy={center} r={2.5} fill="#F8FAFC" fillOpacity={0.9} />
+            </Svg>
+          ) : null}
           {CATEGORIES.map((category, index) => {
             const item = normalized[index];
             const color = colorForCategory(category);
-            const badge = point(center, badgeRadius, angles[index]);
+            const badge = badgeAnchor(geometry, index);
+            const label = labelAnchor(geometry, index);
             return (
               <View key={category}>
                 <View
@@ -241,21 +271,21 @@ export function RadarChart({ data }: RadarChartProps) {
                     },
                   ]}
                 >
-                  <LucideIcon name={CATEGORY_ICONS[category]} size={21} color={color} strokeWidth={2.2} />
+                  <LucideIcon name={CATEGORY_ICONS[category]} size={19} color={color} strokeWidth={2.2} />
                 </View>
                 <Text
                   numberOfLines={1}
                   adjustsFontSizeToFit
-                  minimumFontScale={0.75}
-                  style={[styles.categoryName, { left: badge.x - 40, top: badge.y + 29, color: colors.textSecondary }]}
+                  minimumFontScale={0.7}
+                  style={[styles.categoryName, { left: label.x - LABEL_WIDTH / 2, top: label.y - 22, color: colors.textSecondary }]}
                 >
                   {CATEGORY_LABELS[category]}
                 </Text>
-                <Text style={[styles.categoryValue, { left: badge.x - 40, top: badge.y + 43, color }]}>{item.xp}</Text>
+                <Text style={[styles.categoryValue, { left: label.x - LABEL_WIDTH / 2, top: label.y - 6, color }]}>{item.xp}</Text>
               </View>
             );
           })}
-          {pulseIndex >= 0 ? (
+          {pulseIndex >= 0 && points[pulseIndex] ? (
             <RadarPulse
               x={points[pulseIndex].x}
               y={points[pulseIndex].y}
@@ -265,12 +295,12 @@ export function RadarChart({ data }: RadarChartProps) {
           ) : null}
         </View>
       </Animated.View>
+      {!ready ? <View style={{ height: MIN_BOX }} /> : null}
     </View>
   );
 }
 
 function RadarVertex({
-  category,
   index,
   fromPoints,
   toPoints,
@@ -278,7 +308,6 @@ function RadarVertex({
   color,
   backgroundColor,
 }: {
-  category: Category;
   index: number;
   fromPoints: SharedValue<number[]>;
   toPoints: SharedValue<number[]>;
@@ -291,8 +320,8 @@ function RadarVertex({
     cy: interpolatePoint(fromPoints.value, toPoints.value, progress.value, index, 'y'),
   }));
   return (
-    <G key={category}>
-      <AnimatedCircle animatedProps={animatedProps} r={12} fill={color} fillOpacity={0.16} />
+    <G>
+      <AnimatedCircle animatedProps={animatedProps} r={11} fill={color} fillOpacity={0.16} />
       <AnimatedCircle animatedProps={animatedProps} r={4.5} fill={color} stroke={backgroundColor} strokeWidth={1.5} />
     </G>
   );
@@ -309,13 +338,16 @@ function RadarPulse({ x, y, color, progress }: { x: number; y: number; color: st
 function interpolatePoint(from: number[], to: number[], progress: number, index: number, axis: 'x' | 'y') {
   'worklet';
   const offset = index * 2 + (axis === 'x' ? 0 : 1);
-  return from[offset] + (to[offset] - from[offset]) * progress;
+  const fromValue = from[offset] ?? 0;
+  const toValue = to[offset] ?? fromValue;
+  return fromValue + (toValue - fromValue) * progress;
 }
 
 function interpolateFlat(from: number[], to: number[], progress: number) {
   'worklet';
+  const length = Math.min(from.length, to.length);
   const result: number[] = [];
-  for (let index = 0; index < from.length; index += 1) {
+  for (let index = 0; index < length; index += 1) {
     result[index] = from[index] + (to[index] - from[index]) * progress;
   }
   return result;
@@ -324,32 +356,12 @@ function interpolateFlat(from: number[], to: number[], progress: number) {
 function interpolatePath(from: number[], to: number[], progress: number, center: number, factor: number) {
   'worklet';
   const flat = interpolateFlat(from, to, progress);
-  if (flat.length === 0) return '';
+  if (flat.length < 4) return '';
   let result = `M ${(center + (flat[0] - center) * factor).toFixed(1)},${(center + (flat[1] - center) * factor).toFixed(1)}`;
-  for (let index = 2; index < flat.length; index += 2) {
+  for (let index = 2; index + 1 < flat.length; index += 2) {
     result += ` L ${(center + (flat[index] - center) * factor).toFixed(1)},${(center + (flat[index + 1] - center) * factor).toFixed(1)}`;
   }
   return `${result} Z`;
-}
-
-function pathFromPoints(flat: number[], center: number, factor: number) {
-  if (flat.length === 0) return '';
-  let result = `M ${(center + (flat[0] - center) * factor).toFixed(1)},${(center + (flat[1] - center) * factor).toFixed(1)}`;
-  for (let index = 2; index < flat.length; index += 2) {
-    result += ` L ${(center + (flat[index] - center) * factor).toFixed(1)},${(center + (flat[index + 1] - center) * factor).toFixed(1)}`;
-  }
-  return `${result} Z`;
-}
-
-function point(center: number, radius: number, angle: number): Point {
-  return {
-    x: center + radius * Math.cos(angle),
-    y: center + radius * Math.sin(angle),
-  };
-}
-
-function serializePoints(points: Point[]) {
-  return points.map(item => `${item.x.toFixed(1)},${item.y.toFixed(1)}`).join(' ');
 }
 
 const styles = StyleSheet.create({
@@ -366,7 +378,7 @@ const styles = StyleSheet.create({
   },
   categoryName: {
     position: 'absolute',
-    width: 80,
+    width: LABEL_WIDTH,
     fontFamily: 'Nunito',
     fontSize: 9,
     lineHeight: 12,
@@ -374,7 +386,7 @@ const styles = StyleSheet.create({
   },
   categoryValue: {
     position: 'absolute',
-    width: 80,
+    width: LABEL_WIDTH,
     fontFamily: 'Nunito',
     fontSize: 13,
     lineHeight: 16,
