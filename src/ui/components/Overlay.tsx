@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { BackHandler, Pressable, StyleSheet } from 'react-native';
+import { BackHandler, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { Easing, Extrapolate, interpolate, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -38,12 +38,21 @@ type OverlayProps = {
 
 export function Overlay({ visible, onClose, children, align = 'center' }: OverlayProps) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const reduced = useReducedMotion();
   const [mounted, setMounted] = useState(visible);
   const progress = useSharedValue(visible ? 1 : 0);
   const dragY = useSharedValue(0);
   const closing = useRef(false);
   const { acquire, release } = useContext(OverlayContext);
+
+  // A bottom sheet is laid out inside an auto-height wrapper, so a
+  // percentage height on the sheet resolves to `auto` in Yoga and the
+  // sheet grows past the bottom of the screen. Giving the wrapper a
+  // definite pixel bound keeps every percentage/child constraint inside
+  // it resolvable, and gives scrollable children something to shrink
+  // against.
+  const bottomMaxHeight = Math.max(240, windowHeight - insets.top - 24);
 
   useEffect(() => {
     if (!visible && !mounted) return;
@@ -149,7 +158,11 @@ export function Overlay({ visible, onClose, children, align = 'center' }: Overla
       <GestureDetector gesture={panGesture}>
         <Animated.View
           pointerEvents="box-none"
-          style={[align === 'center' ? styles.centerContent : styles.bottomContent, contentStyle]}
+          style={[
+            align === 'center' ? styles.centerContent : styles.bottomContent,
+            align === 'bottom' ? { maxHeight: bottomMaxHeight } : null,
+            contentStyle,
+          ]}
         >
           {children}
         </Animated.View>
