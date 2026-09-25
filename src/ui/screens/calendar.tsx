@@ -708,16 +708,16 @@ const styles = StyleSheet.create({
   loadingText: { fontFamily: 'Nunito', fontSize: 13 },
   errorTitle: { fontFamily: 'Nunito', fontSize: 18, fontWeight: '800', textAlign: 'center' },
   errorText: { fontFamily: 'Nunito', fontSize: 13, lineHeight: 18, textAlign: 'center' },
-  retry: { minHeight: 46, borderRadius: 14, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
+  retry: { minHeight: 46, borderRadius: 16, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   retryLabel: { fontFamily: 'Nunito', fontSize: 14, fontWeight: '800' },
   heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 28, lineHeight: 34 },
   subtitle: { marginTop: 2 },
   metricsRow: { flexDirection: 'row', gap: 8 },
-  metric: { flex: 1, minHeight: 92, borderWidth: 1, borderRadius: 17, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
+  metric: { flex: 1, minHeight: 92, borderWidth: 1, borderRadius: 18, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center' },
   metricValue: { fontSize: 24, lineHeight: 30 },
   metricLabel: { textAlign: 'center', marginTop: 2 },
-  calendarCard: { borderWidth: 1, borderRadius: 20, padding: 12 },
+  calendarCard: { borderWidth: 1, borderRadius: 18, padding: 12 },
   monthHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   monthButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   monthTitle: { fontSize: 16, lineHeight: 21 },
@@ -738,7 +738,7 @@ const styles = StyleSheet.create({
   sectionHint: { marginTop: 1 },
   recentCard: { borderWidth: 1, borderRadius: 18, paddingHorizontal: 14 },
   recentRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 11, borderBottomColor: '#1E2128', borderBottomWidth: StyleSheet.hairlineWidth },
-  recentDate: { width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  recentDate: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   recentCopy: { flex: 1, minWidth: 0 },
   emptyRecent: { minHeight: 170, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 7 },
   daySheet: { width: '100%', flexShrink: 1, borderWidth: 1, borderBottomWidth: 0, paddingHorizontal: 18, paddingTop: 10 },
@@ -752,7 +752,7 @@ const styles = StyleSheet.create({
   dayTotal: { minHeight: 72, borderRadius: 16, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 },
   dayXp: { fontSize: 27, lineHeight: 33, marginTop: 1 },
   dayCount: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  undoError: { minHeight: 42, borderWidth: 1, borderRadius: 13, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
+  undoError: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
   // flexShrink (not flex:1) is what makes this a real scroll box: the
   // sheet has a pixel maxHeight, the list takes its content height and
   // shrinks (then scrolls) when the content is taller.
@@ -761,10 +761,10 @@ const styles = StyleSheet.create({
   questRow: { minHeight: 68, borderWidth: 1, flexDirection: 'row', alignItems: 'stretch', overflow: 'hidden' },
   questMain: { flex: 1, minWidth: 0, minHeight: 68, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
   undoButton: { width: 50, alignItems: 'center', justifyContent: 'center', borderLeftWidth: 1 },
-  questIcon: { width: 36, height: 36, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  questIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   questCopy: { flex: 1, minWidth: 0 },
   emptyDay: { minHeight: 220, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 7 },
-  emptyIcon: { width: 62, height: 62, borderRadius: 22, alignItems: 'center', justifyContent: 'center', marginBottom: 3 },
+  emptyIcon: { width: 62, height: 62, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: 3 },
 });
 
 export default CalendarScreen;

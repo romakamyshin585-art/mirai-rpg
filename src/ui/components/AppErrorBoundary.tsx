@@ -85,7 +85,7 @@ const styles = StyleSheet.create({
   title: { fontFamily: 'Nunito', fontSize: 21, lineHeight: 27, fontWeight: '800', textAlign: 'center' },
   body: { fontFamily: 'Nunito', fontSize: 14, lineHeight: 20, textAlign: 'center' },
   detail: { fontFamily: 'Nunito', fontSize: 11, lineHeight: 16, textAlign: 'center', opacity: 0.75 },
-  button: { minHeight: 50, paddingHorizontal: 24, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginTop: 6 },
+  button: { minHeight: 50, paddingHorizontal: 24, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginTop: 6 },
   buttonLabel: { fontFamily: 'Nunito', fontSize: 15, fontWeight: '800' },
 });
 

@@ -133,12 +133,39 @@ const _NEW_SPACING = {
 } as const;
 
 // --- Radius ---
+// One scale, used everywhere. Role-based rather than free-form: the
+// audit found 27 distinct radii across the UI (11/13/14/15/17/18/20/21/
+// 22/24/27/28/32...) with 42/54/82px "squircle" tiles landing on
+// different values from one file to the next. Circles are exempt: their
+// radius is half the box by definition.
 const _NEW_RADIUS = {
+  xs: 6,
   sm: 8,
   md: 12,
   lg: 16,
-  xl: 24,
+  /** Content cards and summary blocks. */
+  card: 18,
+  xl: 20,
+  '2xl': 24,
   pill: 999,
+} as const;
+
+/**
+ * Apple "Materials" - translucent layers without refraction.
+ *
+ * Deliberately not Liquid Glass: no lensing, no bending, no travelling
+ * highlight. On RN these are an expo-blur intensity plus a flat overlay
+ * tint, and on Android the blur is skipped entirely (see
+ * `useMaterialStyle`) because a per-frame blur behind a scrolling list
+ * costs frames on most devices.
+ */
+const _NEW_MATERIALS = {
+  ultraThin: { blurIntensity: 20, overlayOpacity: 0.06 },
+  thin: { blurIntensity: 35, overlayOpacity: 0.08 },
+  /** Cards. */
+  regular: { blurIntensity: 50, overlayOpacity: 0.1 },
+  /** Modals and sheets. */
+  thick: { blurIntensity: 70, overlayOpacity: 0.14 },
 } as const;
 
 // --- Elevation (paired iOS shadow + Android elevation) ---
@@ -337,6 +364,8 @@ export const NEW_SPACING_TOKENS = {
 
 export const NEW_COLORS = _NEW_COLORS_DARK;
 export const NEW_RADIUS = _NEW_RADIUS;
+export const NEW_MATERIALS = _NEW_MATERIALS;
+export type MaterialName = keyof typeof _NEW_MATERIALS;
 export const NEW_ELEVATION = _NEW_ELEVATION;
 export const NEW_TYPOGRAPHY = _NEW_TYPOGRAPHY;
 export const NEW_MOTION = _NEW_MOTION;
@@ -390,6 +419,7 @@ interface ThemeContextValue {
   spacing: typeof NEW_SPACING_TOKENS;
   radius: typeof _NEW_RADIUS;
   elevation: typeof _NEW_ELEVATION;
+  materials: typeof _NEW_MATERIALS;
   typography: typeof _NEW_TYPOGRAPHY;
   typographyStylesheet: typeof TYPOGRAPHY_STYLESHEET;
   motion: typeof _NEW_MOTION;
@@ -410,6 +440,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       spacing: NEW_SPACING_TOKENS,
       radius: _NEW_RADIUS,
       elevation: _NEW_ELEVATION,
+      materials: _NEW_MATERIALS,
       typography: _NEW_TYPOGRAPHY,
       typographyStylesheet: TYPOGRAPHY_STYLESHEET,
       motion: _NEW_MOTION,

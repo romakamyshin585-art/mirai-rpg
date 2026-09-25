@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
   close: { position: 'absolute', right: 14, top: 14, width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   scroll: { flexShrink: 1 },
   content: { paddingHorizontal: 22, paddingTop: 18, paddingBottom: 22, alignItems: 'center' },
-  icon: { width: 64, height: 64, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  icon: { width: 64, height: 64, borderRadius: 24, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   category: { letterSpacing: 0.8, marginBottom: 7 },
   title: { textAlign: 'center' },
   description: { textAlign: 'center', marginTop: 8 },

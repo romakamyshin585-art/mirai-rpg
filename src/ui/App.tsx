@@ -10,7 +10,7 @@ import { AchievementsScreen } from './screens/achievements';
 import { CalendarScreen } from './screens/calendar';
 import { HomeScreen } from './screens/home';
 import { Toast } from './toast';
-import { BOTTOM_NAV_BASE_HEIGHT, ThemeProvider, useTheme } from './theme';
+import { BOTTOM_NAV_BASE_HEIGHT, ThemeProvider, makeShadow, useTheme } from './theme';
 import { useNunitoFonts } from './fonts';
 import { LucideIcon } from './components';
 import { CelebrationOverlay } from './components/CelebrationOverlay';
@@ -259,7 +259,7 @@ const TABS: Array<{ key: Tab; icon: string; label: string }> = [
 ];
 
 function BottomTab({ tab, onChange }: { tab: Tab; onChange: (tab: Tab) => void }) {
-  const { colors } = useTheme();
+  const { colors, materials, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const { trigger } = useHaptics();
   const overlayActive = useOverlayActivity();
@@ -268,6 +268,7 @@ function BottomTab({ tab, onChange }: { tab: Tab; onChange: (tab: Tab) => void }
   const indicatorPosition = useSharedValue(0);
   const activeIndex = Math.max(0, getTabIndex(tab));
   const itemWidth = navWidth / TABS.length;
+  const material = materials.thick;
 
   useEffect(() => {
     if (!itemWidth) return;
@@ -291,16 +292,27 @@ function BottomTab({ tab, onChange }: { tab: Tab; onChange: (tab: Tab) => void }
       pointerEvents={overlayActive ? 'none' : 'auto'}
       style={[
         styles.navContainer,
+        makeShadow('navBar'),
         {
           bottom: Math.max(insets.bottom + 6, 12),
-          backgroundColor: Platform.OS === 'ios' ? 'rgba(24,27,36,0.5)' : colors.surfaceOverlay,
+          // Apple "Materials" on iOS; on Android the blur is skipped and
+          // the layer falls back to a solid translucent fill, because a
+          // live blur behind a scrolling list costs frames there.
+          backgroundColor:
+            Platform.OS === 'ios' ? 'rgba(24,27,36,0.5)' : colors.surfaceOverlay,
           borderColor: colors.borderSubtle,
           opacity: overlayActive ? 0 : 1,
         },
       ]}
     >
       <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
-        {Platform.OS === 'ios' ? <BlurView style={StyleSheet.absoluteFillObject} intensity={46} tint="dark" /> : null}
+        {Platform.OS === 'ios' ? (
+          <BlurView
+            style={StyleSheet.absoluteFillObject}
+            intensity={isDark ? material.blurIntensity : Math.round(material.blurIntensity * 0.8)}
+            tint={isDark ? 'dark' : 'light'}
+          />
+        ) : null}
       </View>
       <View style={styles.navContent}>
         <View
@@ -412,7 +424,7 @@ const styles = StyleSheet.create({
   errorTitle: { fontFamily: 'Nunito', fontSize: 20, fontWeight: '800', marginBottom: 12 },
   errorText: { fontFamily: 'Nunito', fontSize: 14, textAlign: 'center', lineHeight: 20 },
   stageText: { fontFamily: 'Nunito', fontSize: 12, marginTop: 10, marginBottom: 20 },
-  retryButton: { minHeight: 48, paddingHorizontal: 24, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  retryButton: { minHeight: 48, paddingHorizontal: 24, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   retryLabel: { fontFamily: 'Nunito', fontSize: 15, fontWeight: '800' },
   navContainer: {
     position: 'absolute',
@@ -420,10 +432,9 @@ const styles = StyleSheet.create({
     right: 16,
     height: BOTTOM_NAV_BASE_HEIGHT,
     borderWidth: 1,
-    borderRadius: 32,
+    borderRadius: 28,
     overflow: 'hidden',
     zIndex: 40,
-    elevation: 16,
   },
   navContent: { flex: 1, paddingHorizontal: 4 },
   navRow: { flex: 1, flexDirection: 'row', alignItems: 'center', position: 'relative' },
