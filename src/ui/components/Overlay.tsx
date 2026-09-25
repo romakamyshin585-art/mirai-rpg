@@ -36,6 +36,27 @@ type OverlayProps = {
   align?: 'center' | 'bottom';
 };
 
+/**
+ * Shared modal/sheet surface.
+ *
+ * Every modal in the app (quest creation, focus mode, achievement
+ * details, calendar day) goes through this component, so the two
+ * "closing leaves a blank screen" bugs had a single place to live.
+ * Guarantees:
+ *
+ *  - `acquire`/`release` are paired exactly once per visible lifetime,
+ *    keyed on `mounted` (the real visible window) with no early-return
+ *    hole, so the overlay count can never drift.
+ *  - `onClose` fires at most once per open cycle, and never after the
+ *    component has unmounted (an animation callback that lands on an
+ *    unmounted tree is the classic source of state updates on dead
+ *    components).
+ *  - Open/close share one `progress` value, so closing mid-open reverses
+ *    from the current value instead of snapping.
+ *  - Bottom sheets get a definite pixel bound, which is what makes
+ *    scrollable children inside them actually scroll (see
+ *    `bottomMaxHeight`).
+ */
 export function Overlay({ visible, onClose, children, align = 'center' }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -43,44 +64,73 @@ export function Overlay({ visible, onClose, children, align = 'center' }: Overla
   const [mounted, setMounted] = useState(visible);
   const progress = useSharedValue(visible ? 1 : 0);
   const dragY = useSharedValue(0);
-  const closing = useRef(false);
+  const aliveRef = useRef(true);
+  const closingRef = useRef(false);
+  const notifiedRef = useRef(false);
   const { acquire, release } = useContext(OverlayContext);
 
   // A bottom sheet is laid out inside an auto-height wrapper, so a
   // percentage height on the sheet resolves to `auto` in Yoga and the
   // sheet grows past the bottom of the screen. Giving the wrapper a
-  // definite pixel bound keeps every percentage/child constraint inside
-  // it resolvable, and gives scrollable children something to shrink
+  // definite pixel bound keeps every child constraint inside it
+  // resolvable, and gives scrollable children something to shrink
   // against.
   const bottomMaxHeight = Math.max(240, windowHeight - insets.top - 24);
 
   useEffect(() => {
-    if (!visible && !mounted) return;
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
+  // Paired 1:1 with the overlay's visible window.
+  useEffect(() => {
+    if (!mounted) return;
     acquire();
     return release;
-  }, [acquire, mounted, release, visible]);
+  }, [acquire, mounted, release]);
 
-  const finishClose = useCallback(() => {
-    closing.current = false;
-    setMounted(false);
-    onClose();
-  }, [onClose]);
+  const exitDuration = reduced ? duration.reducedMotion : duration.standard;
 
-  const requestClose = useCallback(() => {
-    if (closing.current) return;
-    closing.current = true;
-    progress.value = withTiming(0, {
-      duration: reduced ? duration.reducedMotion : duration.standard,
-      easing: Easing.out(Easing.cubic),
-    }, finished => {
-      if (finished) runOnJS(finishClose)();
-    });
-    dragY.value = withTiming(0, { duration: duration.standard });
-  }, [dragY, finishClose, progress, reduced]);
+  const settle = useCallback(
+    (notify: boolean) => {
+      if (!aliveRef.current) return;
+      closingRef.current = false;
+      setMounted(false);
+      if (notify && !notifiedRef.current) {
+        notifiedRef.current = true;
+        onClose();
+      }
+    },
+    [onClose],
+  );
+
+  /** Run the exit animation; `notify` decides whether the owner is told. */
+  const dismiss = useCallback(
+    (notify: boolean) => {
+      if (closingRef.current) return;
+      closingRef.current = true;
+      progress.value = withTiming(
+        0,
+        { duration: exitDuration, easing: Easing.out(Easing.cubic) },
+        finished => {
+          if (!finished) return;
+          runOnJS(settle)(notify);
+        },
+      );
+      dragY.value = withTiming(0, { duration: exitDuration });
+    },
+    [dragY, exitDuration, progress, settle],
+  );
+
+  /** Close requested by the user (backdrop, drag, button, back button). */
+  const requestClose = useCallback(() => dismiss(true), [dismiss]);
 
   useEffect(() => {
     if (visible) {
-      closing.current = false;
+      closingRef.current = false;
+      notifiedRef.current = false;
       setMounted(true);
       progress.value = reduced
         ? withTiming(1, { duration: duration.reducedMotion, easing: Easing.out(Easing.cubic) })
@@ -88,14 +138,11 @@ export function Overlay({ visible, onClose, children, align = 'center' }: Overla
       dragY.value = 0;
       return;
     }
-    if (!mounted || closing.current) return;
-    progress.value = withTiming(0, {
-      duration: reduced ? duration.reducedMotion : duration.standard,
-      easing: Easing.out(Easing.cubic),
-    }, finished => {
-      if (finished) setMounted(false);
-    });
-  }, [dragY, mounted, progress, reduced, visible]);
+    // Owner closed us from the outside: play the exit but do not call
+    // onClose back — it would re-enter the state update that started it.
+    if (!mounted) return;
+    dismiss(false);
+  }, [dismiss, dragY, mounted, progress, reduced, visible]);
 
   useEffect(() => {
     if (!visible) return;

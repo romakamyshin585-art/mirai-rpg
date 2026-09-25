@@ -9,7 +9,7 @@
  * On submit calls quest.create() and closes.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, TextInput, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { H2, Muted, Button, Pill, Text } from './components';
 import { Overlay } from './components/Overlay';
@@ -18,6 +18,14 @@ import { CATEGORIES, type Category } from '../domain/category';
 
 const DEFAULT_XP: Record<1 | 2 | 3, number> = { 1: 15, 2: 30, 3: 60 };
 
+type QuestDraft = {
+  title: string;
+  description: string | null;
+  category: Category;
+  difficulty: 1 | 2 | 3;
+  xp_reward: number;
+};
+
 export function CreateQuestModal({
   visible,
   onClose,
@@ -25,7 +33,7 @@ export function CreateQuestModal({
 }: {
   visible: boolean;
   onClose: () => void;
-  onSubmit: (data: { title: string; description: string | null; category: Category; difficulty: 1 | 2 | 3; xp_reward: number }) => Promise<void>;
+  onSubmit: (data: QuestDraft) => Promise<void>;
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -34,15 +42,46 @@ export function CreateQuestModal({
   const [xpText, setXpText] = useState(String(DEFAULT_XP[1]));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
+  // Fresh form on every open: a half-typed quest must never reappear.
+  useEffect(() => {
+    if (!visible) return;
+    setTitle('');
+    setDescription('');
+    setCategory('health');
+    setDifficulty(1);
+    setXpText(String(DEFAULT_XP[1]));
+    setError(null);
+    setBusy(false);
+  }, [visible]);
 
   function pickDifficulty(d: 1 | 2 | 3) {
     setDifficulty(d);
     setXpText(String(DEFAULT_XP[d]));
   }
 
+  /**
+   * Submission is failure-safe by construction:
+   *  - the sheet is only closed after the repository write resolves;
+   *  - any rejection (validation, SQLite, native) is caught, the form
+   *    stays open and usable with the error shown, and `busy` is always
+   *    released;
+   *  - no state is touched after this component unmounts.
+   * There is no path that leaves an empty screen behind.
+   */
   async function submit() {
+    if (busy) return;
     setError(null);
-    if (title.trim().length < 3) {
+    const trimmedTitle = title.trim();
+    if (trimmedTitle.length < 3) {
       setError('Название слишком короткое');
       return;
     }
@@ -54,23 +93,20 @@ export function CreateQuestModal({
     setBusy(true);
     try {
       await onSubmit({
-        title: title.trim(),
+        title: trimmedTitle,
         description: description.trim() || null,
         category,
         difficulty,
         xp_reward: xp,
       });
-      // reset
-      setTitle('');
-      setDescription('');
-      setCategory('health');
-      setDifficulty(1);
-      setXpText(String(DEFAULT_XP[1]));
+      if (!aliveRef.current) return;
       onClose();
     } catch (e: any) {
-      setError(e?.message ?? String(e));
+      if (!aliveRef.current) return;
+      console.warn('[MiraiRPG] Create quest failed:', e);
+      setError(e?.message ? String(e.message) : 'Не удалось создать квест. Попробуй ещё раз.');
     } finally {
-      setBusy(false);
+      if (aliveRef.current) setBusy(false);
     }
   }
 

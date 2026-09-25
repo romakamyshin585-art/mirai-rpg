@@ -196,6 +196,9 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
     difficulty: 1 | 2 | 3;
     xp_reward: number;
   }) => {
+    // Throwing on failure is intentional: CreateQuestModal catches it,
+    // keeps the form open and shows the reason. Swallowing the error
+    // here is what used to look like "nothing happened".
     await ctx.quest.create(ctx.userId, {
       title: data.title,
       description: data.description ?? undefined,
@@ -203,6 +206,7 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
       difficulty: data.difficulty,
       xp_reward: data.xp_reward,
     });
+    // A new quest must be visible right away, so drop any active filter.
     setFilter('all');
     onDataChanged();
   };

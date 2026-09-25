@@ -14,6 +14,7 @@
  */
 import { freshMemoryDb, getSchemaVersion, migrate } from '../src/db/migrate';
 import { createMemoryDb } from '../src/db/memory';
+import { sqlInt, sqlText } from '../src/db/literals';
 import type { DbExecutor } from '../src/db/executor';
 
 describe('config migration regression', () => {
@@ -62,5 +63,43 @@ describe('config migration regression', () => {
       `SELECT value FROM config WHERE key = 'schema_version'`,
     );
     expect(row?.value).toBe('1');
+  });
+});
+
+describe('SQL literal helpers (config.value workaround)', () => {
+  test('sqlText wraps a plain value in single quotes', () => {
+    expect(sqlText('schema_version')).toBe(`'schema_version'`);
+  });
+
+  test('sqlText escapes embedded quotes so the literal cannot break out', () => {
+    expect(sqlText(`O'Brien`)).toBe(`'O''Brien'`);
+    expect(sqlText(`a'; DROP TABLE config; --`)).toBe(`'a''; DROP TABLE config; --'`);
+  });
+
+  test('sqlText keeps an empty string a valid (non-NULL) literal', () => {
+    // The original failure was a NULL value reaching a NOT NULL column.
+    expect(sqlText('')).toBe(`''`);
+  });
+
+  test('sqlInt truncates and rejects non-finite numbers', () => {
+    expect(sqlInt(3)).toBe('3');
+    expect(sqlInt(3.9)).toBe('3');
+    expect(() => sqlInt(Number.NaN)).toThrow();
+    expect(() => sqlInt(Number.POSITIVE_INFINITY)).toThrow();
+  });
+
+  test('the user_id INSERT path stores a non-null value end to end', async () => {
+    // Mirrors AppContext._ensureUserId: the same statement shape it now
+    // uses, executed against the same fake the app is tested with.
+    const db: DbExecutor = createMemoryDb();
+    await db.exec(`CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    const generated = 'u_abc123';
+    await db.exec(
+      `INSERT OR IGNORE INTO config (key, value) VALUES (${sqlText('user_id')}, ${sqlText(generated)})`,
+    );
+    const row = await db.one<{ value: string | null }>(
+      `SELECT value FROM config WHERE key = ${sqlText('user_id')}`,
+    );
+    expect(row?.value).toBe(generated);
   });
 });

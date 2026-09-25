@@ -342,14 +342,19 @@ function AchievementDetails({ item, onClose }: { item: AchievementItem | null; o
                 {new Date(item.unlockedAt).toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' })}
               </Text>
             ) : null}
+          </ScrollView>
+          {/* Outside the scroll area: the way out is always one tap away,
+              whatever the content height is. */}
+          <View style={[styles.detailFooter, { borderTopColor: colors.borderSubtle }]}>
             <MotionPressable
               accessibilityRole="button"
+              accessibilityLabel="Закрыть"
               onPress={onClose}
               style={[styles.close, { backgroundColor: colors.accent, borderRadius: radius.md }]}
             >
               <Text style={[styles.closeLabel, { color: colors.textInverse }]}>Закрыть</Text>
             </MotionPressable>
-          </ScrollView>
+          </View>
         </View>
       ) : null}
     </Overlay>
@@ -393,12 +398,13 @@ const styles = StyleSheet.create({
   detail: { width: '100%', maxWidth: 420, maxHeight: '86%', alignSelf: 'center', borderWidth: 1, overflow: 'hidden' },
   detailScroll: { flexShrink: 1 },
   detailContent: { padding: 22, alignItems: 'center' },
+  detailFooter: { borderTopWidth: StyleSheet.hairlineWidth, padding: 14, paddingTop: 12 },
   detailIcon: { width: 82, height: 82, borderRadius: 28, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   detailRarity: { letterSpacing: 0.6 },
   detailTitle: { textAlign: 'center', marginTop: 5 },
   detailDescription: { textAlign: 'center', marginTop: 8 },
   detailStatus: { width: '100%', minHeight: 52, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 20 },
-  close: { width: '100%', minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 18 },
+  close: { width: '100%', minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   closeLabel: { fontFamily: 'Nunito', fontSize: 15, fontWeight: '800' },
 });
 
