@@ -63,8 +63,12 @@ jobs:
             -PreactNativeArchitectures=arm64-v8a,armeabi-v7a 2>&1 | tee ../gradle-baseline.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            grep -nE "FAILURE:|What went wrong|^e: |error:|Execution failed for task|> Task .* FAILED|Caused by:" ../gradle-baseline.log | head -40 | while IFS= read -r line; do
-              echo "::error::baseline ${line}"
+            {
+              echo "::group::gradle output (last 60 lines)"
+              tail -n 60 ../gradle-baseline.log
+              echo "::endgroup::"
+            } | while IFS= read -r line; do
+              echo "::error::baseline: ${line}"
             done
           fi
           exit "$status"
@@ -91,8 +95,8 @@ jobs:
             -PreactNativeArchitectures=arm64-v8a 2>&1 | tee ../gradle-arm64.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            grep -nE "FAILURE:|What went wrong|^e: |error:|Execution failed for task|> Task .* FAILED|Caused by:" ../gradle-arm64.log | head -40 | while IFS= read -r line; do
-              echo "::error::tuned ${line}"
+            tail -n 60 ../gradle-arm64.log | while IFS= read -r line; do
+              echo "::error::tuned: ${line}"
             done
           fi
           exit "$status"
@@ -165,8 +169,8 @@ jobs:
             -PreactNativeArchitectures=x86_64 2>&1 | tee ../gradle-x86.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            grep -nE "FAILURE:|What went wrong|^e: |error:|Execution failed for task|> Task .* FAILED|Caused by:" ../gradle-x86.log | head -40 | while IFS= read -r line; do
-              echo "::error::x86 ${line}"
+            tail -n 60 ../gradle-x86.log | while IFS= read -r line; do
+              echo "::error::x86: ${line}"
             done
           fi
           exit "$status"
