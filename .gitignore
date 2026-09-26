@@ -12,7 +12,12 @@ android/local.properties
 .DS_Store
 ios/
 .agents/
-tools/
+# The icon generator is the source of truth for the launcher artwork: the
+# PNGs it writes are committed, so the tool that produced them has to be too.
+# `tools/*` rather than `tools/`: Git cannot re-include a file whose parent
+# directory is excluded.
+tools/*
+!tools/make_icon.py
 .scratch-Documents-MiraiRPG-backup/
 skills-lock.json
 test-android.js

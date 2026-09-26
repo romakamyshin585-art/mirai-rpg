@@ -4,6 +4,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { Easing, Extrapolate, interpolate, interpolateColor, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { Category } from '../domain/category';
 import { AppContext } from './app_context';
 import { QuestsScreen } from './screens/quests';
 import { AchievementsScreen } from './screens/achievements';
@@ -39,6 +40,8 @@ function AppContent() {
   const [transitionDirection, setTransitionDirection] = useState<1 | -1>(1);
   const previousTabRef = useRef<Tab>('home');
   const [revision, setRevision] = useState(0);
+  const [targetQuest, setTargetQuest] = useState<{ id: string; nonce: number } | null>(null);
+  const [questFilter, setQuestFilter] = useState<Category | 'all' | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [celebration, setCelebration] = useState<CelebrationState | null>(null);
   const [achievementCelebrationCodes, setAchievementCelebrationCodes] = useState<string[]>([]);
@@ -104,6 +107,27 @@ function AppContent() {
     }
   }, []);
 
+  /**
+   * Jump from Home to one specific quest on the quest tab.
+   *
+   * The nonce makes repeated requests for the same quest distinct, so
+   * tapping the same recommendation twice still re-opens it instead of
+   * being swallowed as "no change".
+   */
+  const openQuest = useCallback((questId: string) => {
+    setQuestFilter('all');
+    setTargetQuest(current => ({ id: questId, nonce: (current?.nonce ?? 0) + 1 }));
+    changeTab('quests');
+  }, [changeTab]);
+
+  const openQuestsForCategory = useCallback((category: Category) => {
+    setQuestFilter(category);
+    setTargetQuest(null);
+    changeTab('quests');
+  }, [changeTab]);
+
+  const clearTargetQuest = useCallback(() => setTargetQuest(null), []);
+
   const hideToast = useCallback(() => {
     setToast(null);
   }, []);
@@ -150,12 +174,18 @@ function AppContent() {
               ctx={ctx}
               revision={revision}
               onOpenQuests={() => changeTab('quests')}
+              onOpenQuest={openQuest}
               onOpenAchievements={() => changeTab('achievements')}
+              onOpenQuestsForCategory={openQuestsForCategory}
             />
           ) : tab === 'quests' ? (
             <QuestsScreen
               ctx={ctx}
               revision={revision}
+              filter={questFilter}
+              onFilterConsumed={() => setQuestFilter(null)}
+              targetQuest={targetQuest}
+              onTargetConsumed={clearTargetQuest}
               onDataChanged={markDataChanged}
               onQuestCompleted={(notice) => {
                 setToast({
@@ -184,10 +214,37 @@ function AppContent() {
           ) : tab === 'calendar' ? (
             <CalendarScreen ctx={ctx} revision={revision} onDataChanged={markDataChanged} />
           ) : (
-            <AchievementsScreen ctx={ctx} revision={revision} celebrationCodes={achievementCelebrationCodes} />
+            <AchievementsScreen
+              ctx={ctx}
+              revision={revision}
+              celebrationCodes={achievementCelebrationCodes}
+              onDataChanged={markDataChanged}
+            />
           )}
         </ScreenTransition>
         <BottomTab tab={tab} onChange={changeTab} />
+        {/* Scrim under the floating tab bar. The bar is translucent on
+            purpose, which meant list text underneath stayed legible
+            through it and collided with the tab labels. Four stacked bands
+            fake a vertical fade without pulling in a gradient library. */}
+        <View
+          pointerEvents="none"
+          style={[styles.navScrimWrap, { bottom: Math.max(insets.bottom + 6, 12) + BOTTOM_NAV_BASE_HEIGHT - 22 }]}
+        >
+          {[0, 1, 2, 3].map(band => (
+            <View
+              key={band}
+              style={[
+                styles.navScrimBand,
+                {
+                  bottom: band * 13,
+                  backgroundColor: colors.bg,
+                  opacity: 0.9 - band * 0.26,
+                },
+              ]}
+            />
+          ))}
+        </View>
         <Toast
           message={toast?.message ?? null}
           actionLabel={toast?.actionLabel}
@@ -240,13 +297,22 @@ function ScreenTransition({
   useEffect(() => {
     progress.value = reduced
       ? withTiming(1, { duration: duration.reducedMotion, easing: Easing.out(Easing.cubic) })
-      : withTiming(1, { duration: duration.major, easing: Easing.out(Easing.cubic) });
+      : withSpring(1, spring.navigation);
   }, [direction, progress, reduced, tab]);
 
-  const style = useAnimatedStyle(() => ({
-    opacity: progress.value,
-    transform: reduced ? [] : [{ translateX: interpolate(progress.value, [0, 1], [direction * 28, 0], Extrapolate.CLAMP) }],
-  }));
+  const style = useAnimatedStyle(() => {
+    if (reduced) return { opacity: progress.value, transform: [] };
+    // Depth, not just a slide: the incoming screen arrives from slightly
+    // further away and settles in, so switching tabs reads as moving
+    // between two planes instead of sliding a bitmap sideways.
+    return {
+      opacity: interpolate(progress.value, [0, 0.4, 1], [0, 1, 1], Extrapolate.CLAMP),
+      transform: [
+        { translateX: interpolate(progress.value, [0, 1], [direction * 34, 0], Extrapolate.CLAMP) },
+        { scale: interpolate(progress.value, [0, 1], [0.975, 1], Extrapolate.CLAMP) },
+      ],
+    };
+  });
 
   return <Animated.View style={[styles.screen, style]}>{children}</Animated.View>;
 }
@@ -426,6 +492,13 @@ const styles = StyleSheet.create({
   stageText: { fontFamily: 'Nunito', fontSize: 12, marginTop: 10, marginBottom: 20 },
   retryButton: { minHeight: 48, paddingHorizontal: 24, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   retryLabel: { fontFamily: 'Nunito', fontSize: 15, fontWeight: '800' },
+  navScrimWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 52,
+  },
+  navScrimBand: { position: 'absolute', left: 0, right: 0, height: 13 },
   navContainer: {
     position: 'absolute',
     left: 16,

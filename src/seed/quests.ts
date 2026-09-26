@@ -1,12 +1,21 @@
 /**
- * 76 system quests (15 per category, 16 in health). Reasonable spread of
- * difficulty and XP. Titles in Russian.
+ * System quest catalogue.
  *
- * The user can add/remove these by archiving. We re-seed only if catalog
- * is empty (idempotent boot).
+ * Wave 1 (below) shipped with the first release; wave 2 lives in
+ * `quests_v2.ts` and adds 150 entries. Both are exported together as
+ * `QUEST_SEED_ALL`, which is what the boot seeder installs.
+ *
+ * The user can archive any of these by title. Archiving is per profile,
+ * so re-seeding must never resurrect a quest the user removed: the seeder
+ * therefore only inserts titles that do not exist *at all*, and the
+ * second wave is added on top of an already-populated catalogue instead
+ * of replacing it.
+ *
+ * Titles are unique across both waves — the seeder matches on title.
  */
 
 import type { Category } from '../domain/category';
+import { QUEST_SEED_V2 } from './quests_v2';
 
 export interface SeedQuest {
   title: string;
@@ -114,3 +123,6 @@ export const QUEST_SEED: SeedQuest[] = [
   ...DISCIPLINE,
   ...SOCIAL,
 ];
+
+/** Every system quest the app ships with, both waves. */
+export const QUEST_SEED_ALL: SeedQuest[] = [...QUEST_SEED, ...QUEST_SEED_V2];

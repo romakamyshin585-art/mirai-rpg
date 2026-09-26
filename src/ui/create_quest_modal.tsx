@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -72,8 +73,13 @@ export function CreateQuestModal({
 }) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const wide = width >= WIDE_LAYOUT_BREAKPOINT;
+  // The sheet is height-bounded and its body scrolls. Without a real
+  // pixel bound the form grew past the bottom of the screen as soon as
+  // the keyboard opened (or "Дополнительно" was expanded), and the top
+  // half of the dialog — title, input, axis picker — was simply gone.
+  const sheetMaxHeight = Math.max(300, Math.min(height * 0.86, height - insets.top - 24));
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -209,8 +215,19 @@ export function CreateQuestModal({
   );
 
   return (
-    <Overlay visible={visible} onClose={onClose} align="bottom" morphOrigin={morphOrigin} sharedProgress={sharedProgress}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.sheetWrap} pointerEvents="box-none">
+    <Overlay
+      visible={visible}
+      onClose={onClose}
+      align="bottom"
+      morphOrigin={morphOrigin}
+      sharedProgress={sharedProgress}
+      panTarget="handle"
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.sheetWrap}
+        pointerEvents="box-none"
+      >
         <View
           style={[
             styles.sheet,
@@ -220,10 +237,20 @@ export function CreateQuestModal({
               borderTopLeftRadius: radius.xl,
               borderTopRightRadius: radius.xl,
               paddingBottom: insets.bottom + 16,
+              maxHeight: sheetMaxHeight,
             },
           ]}
         >
           <View style={[styles.handle, { backgroundColor: colors.border }]} />
+
+          <ScrollView
+            style={styles.body}
+            contentContainerStyle={styles.bodyContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+          >
 
           <View style={styles.headerRow}>
             <View style={styles.headerCopy}>
@@ -339,6 +366,7 @@ export function CreateQuestModal({
             <LucideIcon name="check" size={18} color={colors.textInverse} strokeWidth={2.6} />
             <Text style={[styles.submitLabel, { color: colors.textInverse }]}>{busy ? 'Сохраняем…' : 'Создать квест'}</Text>
           </MotionPressable>
+          </ScrollView>
         </View>
       </KeyboardAvoidingView>
     </Overlay>
@@ -346,14 +374,17 @@ export function CreateQuestModal({
 }
 
 const styles = StyleSheet.create({
-  sheetWrap: { width: '100%', justifyContent: 'flex-end' },
+  sheetWrap: { width: '100%', justifyContent: 'flex-end', flexShrink: 1 },
   sheet: {
     width: '100%',
+    flexShrink: 1,
     borderWidth: 1,
     borderBottomWidth: 0,
     paddingHorizontal: 18,
     paddingTop: 8,
   },
+  body: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
+  bodyContent: { paddingBottom: 2 },
   handle: { width: 38, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 12 },
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   headerCopy: { flex: 1 },

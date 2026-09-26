@@ -34,8 +34,46 @@ function sqlLiteralToValue(token: string): string | number | null {
   return t;
 }
 
+/**
+ * Split a comma-separated SQL list, ignoring commas inside single-quoted
+ * string literals.
+ *
+ * `VALUES ('Квест, которого больше нет', 'health')` is two values, not
+ * three. Splitting naively on `,` made any quest title containing a comma
+ * look like a column/value count mismatch.
+ */
+function splitSqlList(input: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let inString = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (char === "'") {
+      // '' inside a literal is an escaped quote, not a terminator.
+      if (inString && input[index + 1] === "'") {
+        current += "''";
+        index += 1;
+        continue;
+      }
+      inString = !inString;
+      current += char;
+      continue;
+    }
+    if (char === ',' && !inString) {
+      parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim().length > 0) parts.push(current.trim());
+  return parts;
+}
+
 class MemoryDb {
   tables = new Map<string, Table>();
+  /** CREATE TABLE statements seen so far, for primary-key derivation. */
+  statements: string[] = [];
 
   private ensure(table: string): Table {
     let t = this.tables.get(table);
@@ -44,6 +82,44 @@ class MemoryDb {
       this.tables.set(table, t);
     }
     return t;
+  }
+
+  /**
+   * SQLite's conflict clause, approximated.
+   *
+   * `OR REPLACE` overwrites a row whose PRIMARY KEY / UNIQUE columns
+   * already match, which is what an idempotent restore relies on. The
+   * memory DB is not a real SQLite and does not enforce uniqueness, so the
+   * key is derived from the CREATE TABLE statement the same way the rest
+   * of this file derives columns.
+   */
+  private applyConflict(t: Table, tname: string, row: Row, replace: boolean): void {
+    if (!replace) {
+      t.rows.push(row);
+      return;
+    }
+    const key = this.primaryKeyOf(tname);
+    if (key.length === 0) {
+      t.rows.push(row);
+      return;
+    }
+    const same = (existing: Row) => key.every(column => existing[column] === row[column]);
+    const index = t.rows.findIndex(same);
+    if (index >= 0) t.rows[index] = { ...t.rows[index], ...row };
+    else t.rows.push(row);
+  }
+
+  private primaryKeyOf(table: string): string[] {
+    const statement = this.statements.find(sql =>
+      new RegExp(`CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${table}\\b`, 'i').test(sql),
+    );
+    if (!statement) return [];
+    const body = statement.match(/\(([\s\S]+)\)\s*;?\s*$/)?.[1] ?? '';
+    const primary = body.match(/PRIMARY\s+KEY\s*\(([^)]+)\)/i);
+    if (primary) return primary[1].split(',').map(c => c.trim());
+    // Single-column inline `id TEXT PRIMARY KEY`.
+    const inline = body.match(/^\s*(\w+)\s+[\w()]+\s+PRIMARY\s+KEY/im);
+    return inline ? [inline[1]] : [];
   }
 
   exec(sql: string, params: ReadonlyArray<unknown> = []): { rows: Row[]; changes: number } {
@@ -59,6 +135,7 @@ class MemoryDb {
       const m = s.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\(([\s\S]+)\)\s*;?$/i);
       if (!m) throw new Error('Bad CREATE: ' + sql);
       const tname = m[1];
+      this.statements.push(s);
       if (this.tables.has(tname)) return { rows: [], changes: 0 };
       const cols = m[2].split(',').map((c) => c.trim().split(/\s+/)[0]);
       this.tables.set(tname, { cols, rows: [] });
@@ -69,15 +146,16 @@ class MemoryDb {
       return { rows: [], changes: 0 };
     }
 
-    if (upper.startsWith('INSERT INTO') || upper.startsWith('INSERT OR IGNORE INTO')) {
-      // INSERT [OR IGNORE] INTO t (cols) VALUES (?, ?, ?) or literal VALUES
-      const m = s.match(/INSERT(?:\s+OR\s+IGNORE)?\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([\s\S]+?)\)\s*;?$/i);
+    if (upper.startsWith('INSERT INTO') || upper.startsWith('INSERT OR IGNORE INTO') || upper.startsWith('INSERT OR REPLACE INTO')) {
+      // INSERT [OR IGNORE|OR REPLACE] INTO t (cols) VALUES (?, ?, ?) or literal VALUES
+      const m = s.match(/INSERT(?:\s+OR\s+(?:IGNORE|REPLACE))?\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([\s\S]+?)\)\s*;?$/i);
       if (!m) throw new Error('Bad INSERT: ' + sql);
+      const replace = /INSERT\s+OR\s+REPLACE/i.test(s);
       const tname = m[1];
-      const cols = m[2].split(',').map((c) => c.trim());
+      const cols = splitSqlList(m[2]);
       // Either placeholders are all '?' and params is non-empty,
       // or all placeholders are SQL literals and params is empty.
-      const placeholderList = m[3].split(',').map((c) => c.trim());
+      const placeholderList = splitSqlList(m[3]);
       const isLiteral = placeholderList.every((p) => p !== '?');
       if (isLiteral) {
         if (cols.length !== placeholderList.length) {
@@ -86,7 +164,7 @@ class MemoryDb {
         const t = this.ensure(tname);
         const row: Row = {};
         cols.forEach((c, i) => { row[c] = sqlLiteralToValue(placeholderList[i]); });
-        t.rows.push(row);
+        this.applyConflict(t, tname, row, replace);
         return { rows: [], changes: 1 };
       }
       if (cols.length !== placeholderList.length || placeholderList.length !== params.length) {
@@ -95,7 +173,7 @@ class MemoryDb {
       const t = this.ensure(tname);
       const row: Row = {};
       cols.forEach((c, i) => (row[c] = params[i]));
-      t.rows.push(row);
+      this.applyConflict(t, tname, row, replace);
       return { rows: [], changes: 1 };
     }
 

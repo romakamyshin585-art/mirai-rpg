@@ -14,9 +14,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  # The deliverable: a per-ABI arm64-v8a release APK for the target phone
+  # (Xiaomi Mi 10, Snapdragon 865). Roughly half the size of a universal
+  # build, which is a faster install and a faster cold start. The split is
+  # injected by plugins/withAndroidBuildTuning.js, not by this file.
+  build-arm64:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,14 +46,60 @@ jobs:
       - name: Build release APK
         run: |
           cd android
-          ./gradlew :app:assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a,x86_64
+          ./gradlew :app:assembleRelease --no-daemon \
+            -Pmirai.arm64Only=true \
+            -PreactNativeArchitectures=arm64-v8a
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: mirai-rpg-preview-apk
+          name: mirai-rpg-apk-arm64
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+      - name: Report APK size
+        run: |
+          cd android/app/build/outputs/apk/release
+          for f in *.apk; do
+            echo "$(du -h "$f" | cut -f1)  $f"
+          done
+
+  # x86_64 build for the emulator smoke test. Separate job so it runs in
+  # parallel instead of doubling the wall clock of the release build.
+  # continue-on-error throughout: the emulator is a useful smoke signal, not
+  # a gate, and it has never been a substitute for the real device.
+  smoke-x86:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Android project
+        run: npx expo prebuild --platform android --clean --non-interactive
+
+      - name: Build x86_64 release APK
+        run: |
+          cd android
+          ./gradlew :app:assembleRelease --no-daemon \
+            -Pmirai.arm64Only=false \
+            -PreactNativeArchitectures=x86_64
 
       - name: Run Android emulator smoke test
         continue-on-error: true
@@ -60,15 +110,22 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            adb install -r android/app/build/outputs/apk/release/app-release.apk
+            APK=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
+            echo "installing $APK"
+            adb install -r "$APK"
             adb logcat -c
             adb shell am force-stop com.mirai.rpg
             adb shell am start -n com.mirai.rpg/.MainActivity || true
-            sleep 45
-            adb exec-out screencap -p > emulator-screen-after-45s.png || true
+            sleep 40
+            adb exec-out screencap -p > emulator-boot.png || true
+            adb shell input tap 540 1400 || true
+            sleep 3
+            adb exec-out screencap -p > emulator-after-tap.png || true
             adb logcat -d -v time > emulator-logcat.txt || true
             echo "--- app pid ---"
             adb shell pidof com.mirai.rpg || true
+            echo "--- fatal exceptions ---"
+            grep -E "FATAL EXCEPTION|AndroidRuntime|horcrux" emulator-logcat.txt | head -40 || true
             echo "--- focused window ---"
             adb shell dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' || true
 
@@ -79,5 +136,6 @@ jobs:
           name: android-emulator-diagnostics
           path: |
             emulator-logcat.txt
-            emulator-screen-after-45s.png
+            emulator-boot.png
+            emulator-after-tap.png
           if-no-files-found: warn

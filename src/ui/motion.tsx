@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Easing, Extrapolate, interpolate, interpolateColor, useAnimatedScrollHandler, useAnimatedStyle, useReducedMotion as useReanimatedReducedMotion, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
+import { playPredefined, supportsPredefined, type PredefinedEffect } from 'mirai-haptics';
 import { duration, scale, spring, stagger } from './motion/tokens';
 
 export const MOTION_PRESETS = {
@@ -218,6 +219,31 @@ export function staggerDelay(index: number, baseDelay = 0, step = stagger.itemDe
 
 export type HapticType = 'selection' | 'light' | 'medium' | 'heavy' | 'success' | 'error' | 'warning';
 
+/**
+ * Haptic routing.
+ *
+ * On Android 10+ the effect goes through the local `mirai-haptics` module,
+ * which calls `VibrationEffect.createPredefined()`. The vendor HAL then
+ * picks a waveform tuned for the actual motor — on the Mi 10's X-axis LRA
+ * that is a genuinely different sensation per intensity, where a raw
+ * waveform of the same nominal duration feels identical at every level.
+ *
+ * `expo-haptics` remains the implementation everywhere else: iOS keeps its
+ * Taptic Engine semantics, and Android below 10 falls back to expo's
+ * amplitude-based patterns (the module's own pre-29 path mirrors them).
+ * The intensity ladder is explicit, which is what makes "tap" and
+ * "celebration" feel different rather than merely louder.
+ */
+const PREDEFINED_BY_TYPE: Record<HapticType, PredefinedEffect> = {
+  selection: 'tick',
+  light: 'click',
+  medium: 'click',
+  heavy: 'heavyClick',
+  success: 'doubleClick',
+  error: 'doubleClick',
+  warning: 'doubleClick',
+};
+
 const HAPTIC_MAP: Record<HapticType, () => Promise<void>> = {
   selection: () => Haptics.selectionAsync(),
   light: () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
@@ -238,6 +264,12 @@ export function useHaptics() {
   const reduced = useReducedMotion();
   const trigger = async (type: HapticType) => {
     if (!hapticsEnabled || reduced) return;
+    if (supportsPredefined()) {
+      // Fire-and-forget: the native call is queued on the haptic thread and
+      // awaiting it would add a frame of latency to the press that caused it.
+      playPredefined(PREDEFINED_BY_TYPE[type]);
+      return;
+    }
     try {
       await HAPTIC_MAP[type]();
     } catch {

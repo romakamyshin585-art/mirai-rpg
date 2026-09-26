@@ -1,0 +1,23 @@
+apply plugin: 'com.android.library'
+
+group = 'expo.modules.miraihaptics'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useDefaultAndroidSdkVersions()
+useExpoPublishing()
+
+// Deliberately minimal, mirroring the first-party Expo modules: the
+// expo-modules-core plugin brings in the Kotlin/AGP wiring, the SDK levels
+// and the New Architecture support, so anything added here is one more
+// thing that can disagree with it.
+android {
+  namespace "expo.modules.miraihaptics"
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}

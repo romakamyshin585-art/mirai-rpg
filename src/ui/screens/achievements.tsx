@@ -8,6 +8,7 @@ import type { UnlockedAchievement } from '../../services/achievement_service';
 import { BOTTOM_NAV_BASE_HEIGHT, RARITY_COLORS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
 import { Overlay, type MorphOrigin } from '../components/Overlay';
+import { BackupSheet } from '../components/BackupSheet';
 import { MotionPressable } from '../components/MotionPressable';
 import { MotionProgressBar } from '../components/MotionProgressBar';
 import { duration, spring, useReducedMotion, useScrollHeader } from '../motion';
@@ -50,9 +51,13 @@ type AchievementsScreenProps = {
   ctx: AppContext;
   revision: number;
   celebrationCodes?: string[];
+  /** Called after a profile restore so every screen reloads. */
+  onDataChanged?: () => void;
 };
 
-export function AchievementsScreen({ ctx, revision, celebrationCodes }: AchievementsScreenProps) {
+const APP_VERSION = '0.3.0';
+
+export function AchievementsScreen({ ctx, revision, celebrationCodes, onDataChanged }: AchievementsScreenProps) {
   const { colors, typographyStylesheet: typography } = useTheme();
   const insets = useSafeAreaInsets();
   const { onScroll: onHeaderScroll, style: headerStyle } = useScrollHeader();
@@ -69,6 +74,7 @@ export function AchievementsScreen({ ctx, revision, celebrationCodes }: Achievem
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unlockedCelebrationCodes, setUnlockedCelebrationCodes] = useState<string[]>([]);
+  const [showBackup, setShowBackup] = useState(false);
   const hasLoaded = useRef(false);
 
   useEffect(() => {
@@ -236,7 +242,36 @@ export function AchievementsScreen({ ctx, revision, celebrationCodes }: Achievem
             />
           ))}
         </View>
+
+        <MotionPressable
+          accessibilityRole="button"
+          accessibilityLabel="Резервная копия профиля"
+          onPress={() => setShowBackup(true)}
+          style={[styles.backupRow, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+        >
+          <View style={[styles.backupIcon, { backgroundColor: colors.accentSoft }]}>
+            <LucideIcon name="hard-drive-download" size={18} color={colors.accent} />
+          </View>
+          <View style={styles.backupCopy}>
+            <Text style={[typography.bodyStrong, { color: colors.text }]}>Резервная копия</Text>
+            <Text style={[typography.caption, { color: colors.textMuted }]}>
+              Выгрузить прогресс в файл и восстановить его после переустановки
+            </Text>
+          </View>
+          <LucideIcon name="chevron-right" size={18} color={colors.textMuted} />
+        </MotionPressable>
       </Animated.ScrollView>
+      {showBackup ? (
+        <BackupSheet
+          ctx={ctx}
+          appVersion={APP_VERSION}
+          onClose={() => setShowBackup(false)}
+          onRestored={() => {
+            setShowBackup(false);
+            onDataChanged?.();
+          }}
+        />
+      ) : null}
       <AchievementDetails
         item={selected}
         onClose={() => setSelected(null)}
@@ -453,6 +488,9 @@ const styles = StyleSheet.create({
   filterLabel: { fontSize: 11, lineHeight: 15 },
   filterCount: { fontSize: 11, lineHeight: 15, fontWeight: '800' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  backupRow: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 18, padding: 14, minHeight: 72 },
+  backupIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  backupCopy: { flex: 1, minWidth: 0 },
   cardShell: { width: '48%', position: 'relative' },
   card: { minHeight: 190, borderWidth: 1, padding: 12, position: 'relative', overflow: 'hidden' },
   cardGlow: { position: 'absolute', width: 100, height: 100, borderRadius: 50, top: -50, right: -30, opacity: 0 },

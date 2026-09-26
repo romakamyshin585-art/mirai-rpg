@@ -21,15 +21,15 @@
 import {
   BADGE_GAP,
   BADGE_SIZE,
-  LABEL_HALF_HEIGHT,
   LABEL_WIDTH,
   MAX_BOX,
   MIN_BOX,
+  POD_HEIGHT,
   axisPoints,
-  badgeAnchor,
   computeRadarGeometry,
   gradientRadius,
-  labelAnchor,
+  podAnchor,
+  podOrigin,
   point,
   polygonPath,
   serializePoints,
@@ -112,30 +112,39 @@ describe('radar geometry', () => {
     for (const width of SCREEN_WIDTHS) {
       const geometry = computeRadarGeometry(width, AXES);
       for (let index = 0; index < AXES; index += 1) {
-        const badge = badgeAnchor(geometry, index);
-        const label = labelAnchor(geometry, index);
+        const pod = podAnchor(geometry, index);
+        const origin = podOrigin(geometry, index);
 
-        // Badge fully inside.
-        expect(badge.x - BADGE_SIZE / 2).toBeGreaterThanOrEqual(-0.5);
-        expect(badge.y - BADGE_SIZE / 2).toBeGreaterThanOrEqual(-0.5);
-        expect(badge.x + BADGE_SIZE / 2).toBeLessThanOrEqual(geometry.box + 0.5);
-        expect(badge.y + BADGE_SIZE / 2).toBeLessThanOrEqual(geometry.box + 0.5);
+        // The pod is badge + name + value, so its *whole* box has to fit —
+        // not just the badge. This is the assertion that was missing when
+        // the axis names were found painted on top of the next card.
+        expect(origin.x).toBeGreaterThanOrEqual(-0.5);
+        expect(origin.x + LABEL_WIDTH).toBeLessThanOrEqual(geometry.box + 0.5);
+        expect(origin.y).toBeGreaterThanOrEqual(-0.5);
+        expect(origin.y + POD_HEIGHT).toBeLessThanOrEqual(geometry.box + 0.5);
 
-        // Label block (name + value) fully inside: this is what used to
-        // spill out of the card and under the bottom tab bar.
-        expect(label.x - LABEL_WIDTH / 2).toBeGreaterThanOrEqual(-0.5);
-        expect(label.x + LABEL_WIDTH / 2).toBeLessThanOrEqual(geometry.box + 0.5);
-        expect(label.y - LABEL_HALF_HEIGHT).toBeGreaterThanOrEqual(-0.5);
-        expect(label.y + LABEL_HALF_HEIGHT).toBeLessThanOrEqual(geometry.box + 0.5);
+        // Badge is centred horizontally on the pod.
+        expect(pod.x - BADGE_SIZE / 2).toBeGreaterThanOrEqual(origin.x - 0.5);
+        expect(pod.x + BADGE_SIZE / 2).toBeLessThanOrEqual(origin.x + LABEL_WIDTH + 0.5);
+
+        // The badge still sits on its axis: clamping may only nudge it
+        // horizontally, never push it inside the ring.
+        const angle = geometry.angles[index];
+        const rawX = geometry.center + geometry.badgeRadius * Math.cos(angle);
+        expect(Math.abs(pod.x - rawX)).toBeLessThan(LABEL_WIDTH);
       }
     }
   });
 
-  test('the outermost label still fits, i.e. the reserved ring is respected', () => {
+  test('the outermost ring still leaves room for the pod ring', () => {
     for (const width of SCREEN_WIDTHS) {
       const geometry = computeRadarGeometry(width, AXES);
       expect(geometry.badgeRadius).toBeCloseTo(geometry.maxRadius + BADGE_GAP, 5);
-      expect(geometry.badgeRadius + 30).toBeLessThanOrEqual(geometry.center);
+      // A vertex may never be painted outside the outer grid ring, and the
+      // pods start beyond it, so the gap between them is what keeps the
+      // filled polygon from touching the badges.
+      expect(geometry.badgeRadius).toBeGreaterThan(geometry.maxRadius);
+      expect(geometry.badgeRadius).toBeLessThanOrEqual(geometry.box / 2);
     }
   });
 

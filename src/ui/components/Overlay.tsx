@@ -47,6 +47,15 @@ type OverlayProps = {
    * from wherever the interrupted animation happened to be.
    */
   sharedProgress?: SharedValue<number>;
+  /**
+   * Where the drag-to-dismiss recogniser listens.
+   *
+   * `content` (default) wraps the whole panel — fine for panels with
+   * nothing scrollable inside. `handle` restricts it to an invisible
+   * strip over the grabber, which is what sheets containing a list must
+   * use: a full-body Pan steals the list's vertical drag on Android.
+   */
+  panTarget?: 'content' | 'handle';
 };
 
 export type MorphOrigin = { x: number; y: number; size: number };
@@ -71,6 +80,11 @@ export type MorphOrigin = { x: number; y: number; size: number };
  *  - Bottom sheets get a definite pixel bound, which is what makes
  *    scrollable children inside them actually scroll (see
  *    `bottomMaxHeight`).
+ *  - `panTarget="handle"` keeps the drag-to-dismiss recogniser off the
+ *    sheet body. A `Pan` wrapping a sheet that contains a native scroll
+ *    view cancels that scroll as soon as it activates (~10px), which is
+ *    why a day with six quests could not be scrolled at all: the list
+ *    was correctly sized, it just never received the drag.
  */
 export function Overlay({
   visible,
@@ -79,6 +93,7 @@ export function Overlay({
   align = 'center',
   morphOrigin,
   sharedProgress,
+  panTarget = 'content',
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -201,6 +216,11 @@ export function Overlay({
 
   const panGesture = Gesture.Pan()
     .enabled(align === 'bottom' && !reduced)
+    // A mostly-vertical recogniser: horizontal flings belong to whatever
+    // horizontal scroller the panel may contain (the quest category chips,
+    // the calendar legend), and must not be stolen by the sheet.
+    .failOffsetX([-18, 18])
+    .activeOffsetY([-8, 8])
     .onUpdate(event => {
       dragY.value = Math.max(0, event.translationY);
     })
@@ -257,6 +277,26 @@ export function Overlay({
 
   if (!mounted) return null;
 
+  const handleOnly = panTarget === 'handle' && align === 'bottom';
+  const panel = (
+    <Animated.View
+      pointerEvents="box-none"
+      onLayout={handleContentLayout}
+      style={[
+        align === 'center' ? styles.centerContent : styles.bottomContent,
+        align === 'bottom' ? { maxHeight: bottomMaxHeight } : null,
+        contentStyle,
+      ]}
+    >
+      {handleOnly ? (
+        <GestureDetector gesture={panGesture}>
+          <Animated.View style={styles.dragStrip} />
+        </GestureDetector>
+      ) : null}
+      {children}
+    </Animated.View>
+  );
+
   return (
     <Animated.View
       accessibilityViewIsModal
@@ -272,19 +312,7 @@ export function Overlay({
       <Animated.View pointerEvents="box-none" style={[StyleSheet.absoluteFillObject, backdropStyle]}>
         <Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={requestClose} style={styles.backdrop} />
       </Animated.View>
-      <GestureDetector gesture={panGesture}>
-        <Animated.View
-          pointerEvents="box-none"
-          onLayout={handleContentLayout}
-          style={[
-            align === 'center' ? styles.centerContent : styles.bottomContent,
-            align === 'bottom' ? { maxHeight: bottomMaxHeight } : null,
-            contentStyle,
-          ]}
-        >
-          {children}
-        </Animated.View>
-      </GestureDetector>
+      {handleOnly ? panel : <GestureDetector gesture={panGesture}>{panel}</GestureDetector>}
     </Animated.View>
   );
 }
@@ -296,6 +324,9 @@ const styles = StyleSheet.create({
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.72)' },
   centerContent: { width: '100%', flex: 1, alignItems: 'center', justifyContent: 'center' },
   bottomContent: { width: '100%', alignSelf: 'stretch' },
+  // Invisible grabber band. Absolutely positioned so it adds no height,
+  // and inset from both sides so it never covers a close button.
+  dragStrip: { position: 'absolute', top: 0, left: '26%', right: '26%', height: 30, zIndex: 6 },
 });
 
 export default Overlay;

@@ -4,13 +4,18 @@ import { QuestRepo } from '../src/repos/quest_repo';
 import { AchievementRepo } from '../src/repos/achievement_repo';
 import { RULES } from '../src/domain/achievements';
 import { ACHIEVEMENT_SEED } from '../src/seed/achievements';
+import { QUEST_SEED } from '../src/seed/quests';
 
 describe('seed', () => {
-  test('first boot: inserts 76 quests + 17 achievements', async () => {
+  const WAVE_1 = 76;
+  const WAVE_2 = 150;
+  const TOTAL = WAVE_1 + WAVE_2;
+
+  test('first boot: inserts the full quest catalogue + 17 achievements', async () => {
     const db = await freshMemoryDb();
     const result = await seedIfEmpty(db);
     expect(result.achievementsInserted).toBe(17);
-    expect(result.questsInserted).toBe(76);
+    expect(result.questsInserted).toBe(TOTAL);
   });
 
   test('second boot: idempotent (0 inserts)', async () => {
@@ -21,19 +26,72 @@ describe('seed', () => {
     expect(result.questsInserted).toBe(0);
   });
 
-  test('5 categories represented, 15 quests each + 16 in health', async () => {
+  test('5 categories represented, evenly spread across both waves', async () => {
     const db = await freshMemoryDb();
     await seedIfEmpty(db);
     const qRepo = new QuestRepo(db);
     const all = await qRepo.listSystem();
     const byCat: Record<string, number> = {};
     for (const q of all) byCat[q.category] = (byCat[q.category] ?? 0) + 1;
-    expect(byCat.health).toBe(16);
-    expect(byCat.knowledge).toBe(15);
-    expect(byCat.career).toBe(15);
-    expect(byCat.discipline).toBe(15);
-    expect(byCat.social).toBe(15);
-    expect(all.length).toBe(76);
+    // Wave 1 shipped 15 per category (16 in health); wave 2 added 30
+    // each, so every category lands on 45-46.
+    expect(byCat.health).toBe(46);
+    expect(byCat.knowledge).toBe(45);
+    expect(byCat.career).toBe(45);
+    expect(byCat.discipline).toBe(45);
+    expect(byCat.social).toBe(45);
+    expect(all.length).toBe(TOTAL);
+  });
+
+  test('quest titles are unique — the seeder matches on them', async () => {
+    const db = await freshMemoryDb();
+    await seedIfEmpty(db);
+    const titles = (await new QuestRepo(db).listSystem()).map(q => q.title);
+    expect(new Set(titles).size).toBe(titles.length);
+  });
+
+  test('a profile that already has wave 1 receives wave 2 additively', async () => {
+    // This is the upgrade path for an existing install: the old seeder
+    // only seeded an empty catalogue, so wave 2 would never appear.
+    const db = await freshMemoryDb();
+    const qRepo = new QuestRepo(db);
+    for (const quest of QUEST_SEED) {
+      await qRepo.insert({
+        user_id: null,
+        title: quest.title,
+        description: quest.description,
+        category: quest.category,
+        difficulty: quest.difficulty,
+        xp_reward: quest.xp_reward,
+        is_system: 1,
+        is_active: 1,
+      });
+    }
+    const result = await seedIfEmpty(db);
+    expect(result.questsInserted).toBe(WAVE_2);
+    expect((await qRepo.listSystem()).length).toBe(TOTAL);
+  });
+
+  test('a profile that archived a shipped quest does not get it back', async () => {
+    const db = await freshMemoryDb();
+    const qRepo = new QuestRepo(db);
+    const archived = QUEST_SEED[0]!;
+    const row = await qRepo.insert({
+      user_id: null,
+      title: archived.title,
+      description: archived.description,
+      category: archived.category,
+      difficulty: archived.difficulty,
+      xp_reward: archived.xp_reward,
+      is_system: 1,
+      is_active: 0,
+    });
+    await seedIfEmpty(db);
+    const system = await qRepo.listSystem();
+    const matches = system.filter(q => q.title === archived.title);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.id).toBe(row.id);
+    expect(matches[0]?.is_active).toBe(0);
   });
 
   test('all 17 achievement codes present in catalog', async () => {
@@ -114,8 +172,10 @@ describe('seed', () => {
     });
     await seedIfEmpty(db);
     const system = await qRepo.listSystem();
-    expect(system).toHaveLength(1);
-    expect(system[0]?.is_active).toBe(0);
+    expect(system).toHaveLength(TOTAL + 1);
+    const archived = system.filter(q => q.title === 'Archived system');
+    expect(archived).toHaveLength(1);
+    expect(archived[0]?.is_active).toBe(0);
   });
 });
 

@@ -19,9 +19,9 @@
  * shows the essentials instead of a wall of widgets.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import Animated from 'react-native-reanimated';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import Animated, { Easing, Extrapolate, interpolate, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
 import { CompletionRepo, type QuestRow } from '../../repos/quest_repo';
@@ -40,11 +40,13 @@ import { buildWeeklyReport, type WeeklyReport } from '../../domain/weekly_report
 import { BOTTOM_NAV_BASE_HEIGHT, CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
 import { RadarChart, type RadarData } from '../components/RadarChart';
+import { CategoryInsightSheet, type AxisInsight } from '../components/CategoryInsightSheet';
 import { MotionPressable } from '../components/MotionPressable';
 import { MotionNumber } from '../components/MotionNumber';
 import { MotionProgressBar } from '../components/MotionProgressBar';
 import { MotionReveal } from '../components/MotionReveal';
-import { useScrollHeader } from '../motion';
+import { CrystalMark } from '../components/CrystalMark';
+import { duration, spring, useReducedMotion, useScrollHeader } from '../motion';
 
 const DAILY_GOAL = 5;
 const RECOMMENDATION_COUNT = 3;
@@ -79,7 +81,10 @@ type HomeScreenProps = {
   ctx: AppContext;
   revision: number;
   onOpenQuests: () => void;
+  onOpenQuest: (questId: string) => void;
   onOpenAchievements: () => void;
+  /** Jump to the quest list pre-filtered by axis. */
+  onOpenQuestsForCategory?: (category: Category) => void;
 };
 
 type DismissalStore = {
@@ -120,7 +125,7 @@ function persistDismissed(dismissed: string[]) {
   }
 }
 
-export function HomeScreen({ ctx, revision, onOpenQuests, onOpenAchievements }: HomeScreenProps) {
+export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAchievements, onOpenQuestsForCategory }: HomeScreenProps) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const insets = useSafeAreaInsets();
   const { onScroll: onHeaderScroll, style: headerStyle } = useScrollHeader();
@@ -133,12 +138,15 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenAchievements }: 
   const [nextQuest, setNextQuest] = useState<QuestRow | null>(null);
   const [recommendations, setRecommendations] = useState<ScoredQuest[]>([]);
   const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
+  const [weeklyXpByCategory, setWeeklyXpByCategory] = useState<Record<string, number>>({});
   const [unlocked, setUnlocked] = useState(0);
   const [totalAchievements, setTotalAchievements] = useState(0);
   const [recentActivity, setRecentActivity] = useState<RecentActivityItem[]>([]);
   const [personalBests, setPersonalBests] = useState<Array<{ scope: string; value: number; achieved_at: string }>>([]);
   const [showRecords, setShowRecords] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
+  const [axisSheet, setAxisSheet] = useState<Category | null>(null);
+  const [jumping, setJumping] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [shownCounts, setShownCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -212,6 +220,12 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenAchievements }: 
           nextWeekHint: ranked[0]?.reason ?? null,
         }),
       );
+
+      const weeklyXp: Record<string, number> = {};
+      for (const row of completions) {
+        weeklyXp[row.category] = (weeklyXp[row.category] ?? 0) + row.xp_awarded;
+      }
+      setWeeklyXpByCategory(weeklyXp);
     } catch (value) {
       setError(value instanceof Error ? value.message : String(value));
     } finally {
@@ -255,10 +269,24 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenAchievements }: 
     setRecommendations(current => current.filter(item => item.quest.id !== questId));
   };
 
+  /**
+   * Recommendation tap: hand the quest to the quest tab instead of just
+   * opening the list. The card plays a one-shot "lift" so the tap reads
+   * as a departure rather than a no-op, then the tab transition takes
+   * over.
+   */
+  const openRecommendation = (questId: string) => {
+    setJumping(questId);
+    setTimeout(() => {
+      setJumping(null);
+      onOpenQuest(questId);
+    }, 170);
+  };
+
   if (loading) {
     return (
       <View style={[styles.center, { backgroundColor: colors.bg }]}>
-        <ActivityIndicator color={colors.accent} size="large" />
+        <CrystalMark size={92} />
         <Text style={[styles.loading, { color: colors.textMuted }]}>Собираем твой прогресс…</Text>
       </View>
     );
@@ -298,8 +326,24 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenAchievements }: 
   });
   const achievementProgress = totalAchievements > 0 ? Math.round((unlocked / totalAchievements) * 100) : 0;
   const achievementsHint = totalAchievements > 0 ? `${achievementProgress}% открыто` : 'Нет наград';
+  // Per-axis detail for the radar's tap target. All-time numbers come
+  // from the stat rows the screen already loaded; the 7-day delta comes
+  // from the same completions window the weekly report uses.
+  const axisInsights = useMemo<Record<Category, AxisInsight>>(() => {
+    const result = {} as Record<Category, AxisInsight>;
+    for (const category of CATEGORIES) {
+      const stat = stats.find(item => item.category === category);
+      result[category] = {
+        xp: stat?.xp_total_in_category ?? 0,
+        questsCompleted: stat?.value ?? 0,
+        weeklyXp: weeklyXpByCategory[category] ?? 0,
+      };
+    }
+    return result;
+  }, [stats, weeklyXpByCategory]);
 
   return (
+    <>
     <Animated.ScrollView
       onScroll={onHeaderScroll}
       scrollEventThrottle={16}
@@ -338,7 +382,7 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenAchievements }: 
               </View>
             </MotionPressable>
             <View style={[styles.avatar, { borderColor: colors.accent, backgroundColor: colors.surfaceElevated }]}>
-              <LucideIcon name="user-round" size={27} color={colors.accent} />
+              <CrystalMark size={32} animated={false} />
               <View style={[styles.levelDot, { backgroundColor: colors.accent, borderColor: colors.bg }]}>
                 <MotionNumber key={`level-${character.level}`} value={character.level} style={[styles.levelDotText, { color: colors.textInverse }]} />
               </View>
@@ -396,11 +440,11 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenAchievements }: 
           <View style={styles.sectionHeader}>
             <View style={styles.sectionCopy}>
               <Text style={[typography.bodyStrong, { color: colors.text }]}>Характеристики</Text>
-              <Text style={[typography.caption, { color: colors.textMuted }]}>Баланс пяти областей развития</Text>
+              <Text style={[typography.caption, { color: colors.textMuted }]}>Нажми на область, чтобы раскрыть</Text>
             </View>
             <LucideIcon name="radar" size={20} color={colors.catDiscipline} />
           </View>
-          <RadarChart data={radarData} />
+          <RadarChart data={radarData} selected={axisSheet} onSelect={category => setAxisSheet(category)} />
         </View>
       </MotionReveal>
 
@@ -483,36 +527,27 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenAchievements }: 
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, borderRadius: radius.lg }]}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionCopy}>
-                <Text style={[typography.bodyStrong, { color: colors.text }]}>Что попробовать</Text>
-                <Text style={[typography.caption, { color: colors.textMuted }]}>Подобрано под твой баланс</Text>
+                <Text style={[typography.bodyStrong, { color: colors.text }]}>Куда расти</Text>
+                <Text style={[typography.caption, { color: colors.textMuted }]}>Нажми — откроется квест</Text>
               </View>
-              <LucideIcon name="sparkles" size={20} color={colors.accent} />
+              <LucideIcon name="compass" size={20} color={colors.accent} />
             </View>
-            {recommendations.map(item => {
+            {recommendations.map((item, index) => {
               const axisColor = colors[`cat${item.quest.category.charAt(0).toUpperCase()}${item.quest.category.slice(1)}` as keyof typeof colors];
+              const leaving = jumping === item.quest.id;
               return (
-                <View key={item.quest.id} style={[styles.recommendation, { borderColor: colors.borderSubtle, borderRadius: radius.md }]}>
-                  <View style={[styles.recommendationIcon, { backgroundColor: `${axisColor}20` }]}>
-                    <LucideIcon name={CATEGORY_ICONS[item.quest.category]} size={18} color={axisColor} />
-                  </View>
-                  <View style={styles.recommendationCopy}>
-                    <Text numberOfLines={1} style={[typography.bodyStrong, { color: colors.text }]}>
-                      {item.quest.title}
-                    </Text>
-                    <Text style={[typography.caption, { color: colors.textMuted }]} numberOfLines={2}>
-                      {item.reason}
-                    </Text>
-                  </View>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Не интересно: ${item.quest.title}`}
-                    hitSlop={10}
-                    onPress={() => dismiss(item.quest.id)}
-                    style={styles.dismiss}
-                  >
-                    <LucideIcon name="x" size={16} color={colors.textMuted} />
-                  </Pressable>
-                </View>
+                <RecommendationRow
+                  key={item.quest.id}
+                  index={index}
+                  title={item.quest.title}
+                  reason={item.reason}
+                  category={item.quest.category}
+                  xp={item.quest.xpReward}
+                  color={axisColor}
+                  leaving={leaving}
+                  onOpen={() => openRecommendation(item.quest.id)}
+                  onDismiss={() => dismiss(item.quest.id)}
+                />
               );
             })}
             <MotionPressable
@@ -649,9 +684,145 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenAchievements }: 
         </MotionReveal>
       ) : null}
     </Animated.ScrollView>
+
+    <CategoryInsightSheet
+      category={axisSheet}
+      insights={axisInsights}
+      onClose={() => setAxisSheet(null)}
+      onOpenQuests={category => {
+        setAxisSheet(null);
+        if (onOpenQuestsForCategory) onOpenQuestsForCategory(category);
+        else onOpenQuests();
+      }}
+    />
+    </>
   );
 }
 
+/**
+ * One recommendation row.
+ *
+ * Tapping the body is the primary action — it hands the quest to the quest
+ * tab and opens it there — so the whole row is a button and only the
+ * trailing "x" is a separate target. `leaving` drives the hand-off: the row
+ * lifts, brightens and shrinks for ~170ms before the tab change, which is
+ * what makes the jump feel like the card travelled rather than the screen
+ * teleported.
+ */
+function RecommendationRow({
+  index,
+  title,
+  reason,
+  category,
+  xp,
+  color,
+  leaving,
+  onOpen,
+  onDismiss,
+}: {
+  index: number;
+  title: string;
+  reason: string;
+  category: Category;
+  xp: number;
+  color: string;
+  leaving: boolean;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  const { colors, radius, typographyStylesheet: typography } = useTheme();
+  const reduced = useReducedMotion();
+  const entrance = useSharedValue(0);
+  const press = useSharedValue(0);
+
+  useEffect(() => {
+    entrance.value = reduced
+      ? withTiming(1, { duration: duration.reducedMotion })
+      : withDelay(70 + index * 80, withSpring(1, spring.card));
+  }, [entrance, index, reduced]);
+
+  const style = useAnimatedStyle(() => {
+    if (leaving) {
+      // Hand-off: rise, shrink, fade. Runs on the UI thread so it is not
+      // at the mercy of the tab switch that follows.
+      return reduced
+        ? { opacity: withTiming(0, { duration: duration.reducedMotion }) }
+        : {
+            opacity: withTiming(0, { duration: duration.standard, easing: Easing.in(Easing.cubic) }),
+            transform: [
+              { translateY: withTiming(-26, { duration: duration.standard, easing: Easing.in(Easing.cubic) }) },
+              { scale: withTiming(0.9, { duration: duration.standard, easing: Easing.in(Easing.cubic) }) },
+            ],
+          };
+    }
+    return {
+      opacity: entrance.value,
+      transform: reduced
+        ? [{ scale: 1 - press.value * 0.02 }]
+        : [
+            { translateY: (1 - entrance.value) * 14 },
+            { scale: (0.96 + entrance.value * 0.04) * (1 - press.value * 0.02) },
+          ],
+    };
+  });
+
+  return (
+    <Animated.View style={style}>
+      <MotionPressable
+        accessibilityRole="button"
+        accessibilityLabel={`Открыть квест: ${title}, ${xp} XP`}
+        onPress={onOpen}
+        onPressIn={() => {
+          if (!reduced) press.value = withSpring(1, spring.card);
+        }}
+        onPressOut={() => {
+          if (!reduced) press.value = withSpring(0, spring.card);
+        }}
+        style={[
+          styles.recommendation,
+          {
+            backgroundColor: leaving ? `${color}14` : colors.surfaceElevated,
+            borderColor: leaving ? color : colors.borderSubtle,
+            borderRadius: radius.md,
+          },
+        ]}
+      >
+        <View style={[styles.recommendationIcon, { backgroundColor: `${color}20` }]}>
+          <LucideIcon name={CATEGORY_ICONS[category]} size={18} color={color} />
+        </View>
+        <View style={styles.recommendationCopy}>
+          <Text numberOfLines={1} style={[typography.bodyStrong, { color: colors.text }]}>
+            {title}
+          </Text>
+          <Text style={[typography.caption, { color: colors.textMuted }]} numberOfLines={2}>
+            {reason}
+          </Text>
+        </View>
+        <View style={styles.recommendationSide}>
+          <Text style={[typography.numericSmall, { color: colors.accent }]}>+{xp}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Не интересно: ${title}`}
+            hitSlop={10}
+            onPress={onDismiss}
+            style={styles.dismiss}
+          >
+            <LucideIcon name="x" size={16} color={colors.textMuted} />
+          </Pressable>
+        </View>
+      </MotionPressable>
+    </Animated.View>
+  );
+}
+/**
+ * Disclosure block.
+ *
+ * The body used to mount and unmount instantly, which read as a glitch on a
+ * long scroll. It now measures itself once per expansion and animates to
+ * the real height, so a card unfolds under the finger instead of appearing.
+ * The chevron rotates on the same value, which is what ties the two halves
+ * of the control together.
+ */
 function CollapsibleBlock({
   title,
   hint,
@@ -668,6 +839,42 @@ function CollapsibleBlock({
   children: React.ReactNode;
 }) {
   const { colors, typographyStylesheet: typography } = useTheme();
+  const reduced = useReducedMotion();
+  const [height, setHeight] = useState(0);
+  const progress = useSharedValue(expanded ? 1 : 0);
+  const [mounted, setMounted] = useState(expanded);
+
+  useEffect(() => {
+    if (expanded) {
+      setMounted(true);
+      progress.value = reduced ? 1 : withSpring(1, spring.card);
+      return;
+    }
+    if (reduced) {
+      setMounted(false);
+      progress.value = 0;
+      return;
+    }
+    progress.value = withTiming(0, { duration: duration.standard, easing: Easing.in(Easing.cubic) }, finished => {
+      if (finished) setMounted(false);
+    });
+  }, [expanded, progress, reduced]);
+
+  const bodyStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.4, 1], [0, 0.4, 1], Extrapolate.CLAMP),
+    transform: reduced ? [] : [{ translateY: interpolate(progress.value, [0, 1], [-8, 0], Extrapolate.CLAMP) }],
+    // height is the measured content height, so the block never has to
+    // guess and the scroll position below it does not jump.
+    height: height === 0 ? undefined : Math.max(0, height * progress.value),
+    overflow: 'hidden',
+  }));
+
+  const chevronStyle = useAnimatedStyle(() => ({
+    transform: reduced
+      ? []
+      : [{ rotate: `${interpolate(progress.value, [0, 1], [-90, 0], Extrapolate.CLAMP)}deg` }],
+  }));
+
   return (
     <View>
       <MotionPressable
@@ -683,9 +890,18 @@ function CollapsibleBlock({
           <Text style={[typography.bodyStrong, { color: colors.text }]}>{title}</Text>
           <Text style={[typography.caption, { color: colors.textMuted }]}>{hint}</Text>
         </View>
-        <LucideIcon name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
+        <Animated.View style={chevronStyle}>
+          <LucideIcon name="chevron-down" size={18} color={colors.textMuted} />
+        </Animated.View>
       </MotionPressable>
-      {expanded ? <View style={styles.disclosureBody}>{children}</View> : null}
+      {mounted ? (
+        <Animated.View
+          onLayout={event => setHeight(event.nativeEvent.layout.height)}
+          style={bodyStyle}
+        >
+          <View>{children}</View>
+        </Animated.View>
+      ) : null}
     </View>
   );
 }
@@ -751,6 +967,7 @@ const styles = StyleSheet.create({
   recommendation: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, padding: 10, marginBottom: 8 },
   recommendationIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   recommendationCopy: { flex: 1, minWidth: 0 },
+  recommendationSide: { alignItems: 'flex-end', gap: 2 },
   dismiss: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
   seeAll: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', paddingVertical: 4 },
   goalTrack: { height: 6, borderRadius: 3, overflow: 'hidden', marginBottom: 12 },

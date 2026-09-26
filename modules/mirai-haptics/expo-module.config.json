@@ -1,0 +1,7 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "name": "MiraiHaptics",
+    "modules": ["expo.modules.miraihaptics.MiraiHapticsModule"]
+  }
+}

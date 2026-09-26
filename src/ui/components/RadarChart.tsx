@@ -1,21 +1,45 @@
+/**
+ * Radar chart — the character stat wheel on Home.
+ *
+ * Layout contract (the bug this file used to have): every per-axis
+ * element lives in ONE `absoluteFill` layer. Previously each axis got a
+ * bare `<View>` wrapper holding absolutely positioned children, and those
+ * wrappers sat *after* the `<Svg>` in a column — so their layout origin
+ * was the bottom of the chart, not the top. Every badge and label was
+ * therefore painted a full `box` too low: the top axis ("Здоровье")
+ * landed under the card's bottom edge and on top of the neighbouring
+ * "Итоги недели" card, and the other four fell off screen entirely. The
+ * geometry module's bounds are correct; the containing block was not.
+ *
+ * Each axis is now a tappable pod: badge with the category icon, the axis
+ * name and the XP value. Tapping it reports the category upward so Home
+ * can show a per-axis breakdown (quests completed, XP earned, share).
+ */
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Animated, { Easing, Extrapolate, interpolate, useAnimatedProps, useAnimatedReaction, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, { Easing, Extrapolate, interpolate, useAnimatedProps, useAnimatedReaction, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { Circle, Defs, G, Line, LinearGradient, Path, Polygon, RadialGradient, Stop, Svg } from 'react-native-svg';
 import { CATEGORIES, type Category } from '../../domain/category';
 import { CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
+import { MotionPressable } from './MotionPressable';
 import { duration, spring, useReducedMotion } from '../motion';
 import {
   BADGE_SIZE,
   GRID_LEVELS,
+  LABEL_HEIGHT,
   LABEL_WIDTH,
   MIN_BOX,
+  POD_ABOVE,
+  POD_BELOW,
+  POD_LABEL_GAP,
+  VALUE_GAP,
+  VALUE_HEIGHT,
   axisPoints,
-  badgeAnchor,
   computeRadarGeometry,
   gradientRadius,
-  labelAnchor,
+  podAnchor,
   point,
   polygonPath,
   serializePoints,
@@ -31,6 +55,10 @@ export type RadarData = {
 
 type RadarChartProps = {
   data: RadarData[];
+  /** Fired when an axis pod is tapped. */
+  onSelect?: (category: Category, item: RadarData) => void;
+  /** Category currently shown in the detail sheet, if any. */
+  selected?: Category | null;
 };
 
 type DayValues = Record<Category, number>;
@@ -46,7 +74,7 @@ const CATEGORY_ICONS: Record<Category, string> = {
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
-export function RadarChart({ data }: RadarChartProps) {
+export function RadarChart({ data, onSelect, selected = null }: RadarChartProps) {
   const { colors } = useTheme();
   const reduced = useReducedMotion();
   const [width, setWidth] = useState(0);
@@ -250,41 +278,32 @@ export function RadarChart({ data }: RadarChartProps) {
               <Circle cx={center} cy={center} r={2.5} fill="#F8FAFC" fillOpacity={0.9} />
             </Svg>
           ) : null}
-          {CATEGORIES.map((category, index) => {
-            const item = normalized[index];
-            const color = colorForCategory(category);
-            const badge = badgeAnchor(geometry, index);
-            const label = labelAnchor(geometry, index);
-            return (
-              <View key={category}>
-                <View
-                  accessible
-                  accessibilityLabel={`${CATEGORY_LABELS[category]}: ${item.xp} XP`}
-                  style={[
-                    styles.badge,
-                    {
-                      left: badge.x - BADGE_SIZE / 2,
-                      top: badge.y - BADGE_SIZE / 2,
-                      backgroundColor: colors.surface,
-                      borderColor: color,
-                      boxShadow: `0 0 14px ${color}66`,
-                    },
-                  ]}
-                >
-                  <LucideIcon name={CATEGORY_ICONS[category]} size={19} color={color} strokeWidth={2.2} />
-                </View>
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.7}
-                  style={[styles.categoryName, { left: label.x - LABEL_WIDTH / 2, top: label.y - 22, color: colors.textSecondary }]}
-                >
-                  {CATEGORY_LABELS[category]}
-                </Text>
-                <Text style={[styles.categoryValue, { left: label.x - LABEL_WIDTH / 2, top: label.y - 6, color }]}>{item.xp}</Text>
-              </View>
-            );
-          })}
+
+          {/*
+            The one layer that owns every badge/label. `absoluteFill` makes
+            it the containing block anchored to the chart's top-left, and
+            takes it out of the column flow — which is precisely what the
+            old bare wrapper Views got wrong.
+          */}
+          <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+            {CATEGORIES.map((category, index) => {
+              const item = normalized[index];
+              return (
+                <AxisPod
+                  key={category}
+                  index={index}
+                  box={box}
+                  category={category}
+                  item={item}
+                  color={colorForCategory(category)}
+                  surface={colors.surface}
+                  active={selected === category}
+                  onPress={onSelect ? () => onSelect(category, item) : undefined}
+                />
+              );
+            })}
+          </View>
+
           {pulseIndex >= 0 && points[pulseIndex] ? (
             <RadarPulse
               x={points[pulseIndex].x}
@@ -297,6 +316,153 @@ export function RadarChart({ data }: RadarChartProps) {
       </Animated.View>
       {!ready ? <View style={{ height: MIN_BOX }} /> : null}
     </View>
+  );
+}
+
+/**
+ * One axis: tappable badge + name + value, positioned from the shared
+ * geometry. Entrance is a short stagger keyed on the axis index, so the
+ * wheel assembles itself instead of appearing at once. Nothing here loops
+ * forever — a continuously spinning ring on five pods is a battery cost
+ * for no information.
+ */
+function AxisPod({
+  index,
+  box,
+  category,
+  item,
+  color,
+  surface,
+  active,
+  onPress,
+}: {
+  index: number;
+  /** The chart's resolved box, so the pod lands on the real coordinate system. */
+  box: number;
+  category: Category;
+  item: RadarData;
+  color: string;
+  surface: string;
+  active: boolean;
+  onPress?: () => void;
+}) {
+  const { colors, radius } = useTheme();
+  const reduced = useReducedMotion();
+  const geometry = useMemo(() => computeRadarGeometry(box, CATEGORIES.length), [box]);
+  const pod = useMemo(() => podAnchor(geometry, index), [geometry, index]);
+  const entrance = useSharedValue(0);
+  const press = useSharedValue(0);
+
+  useEffect(() => {
+    if (reduced) {
+      entrance.value = withTiming(1, { duration: duration.reducedMotion });
+      return;
+    }
+    entrance.value = withDelay(
+      90 + index * 65,
+      withSequence(
+        withTiming(1.12, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
+        withSpring(1, spring.celebration),
+      ),
+    );
+  }, [entrance, index, reduced]);
+
+  useEffect(() => {
+    if (!active) {
+      press.value = withSpring(0, spring.navigation);
+      return;
+    }
+    press.value = withSpring(1, spring.navigation);
+  }, [active, press]);
+
+  const podStyle = useAnimatedStyle(() => ({
+    opacity: entrance.value,
+    transform: reduced
+      ? [{ scale: 1 - press.value * 0.06 }]
+      : [
+          { scale: (0.72 + entrance.value * 0.28) * (1 - press.value * 0.08) },
+        ],
+  }));
+
+  const ringStyle = useAnimatedStyle(() => ({
+    opacity: press.value,
+    transform: reduced ? [] : [{ scale: 0.85 + press.value * 0.35 }],
+  }));
+
+  const handleIn = () => {
+    if (!reduced) press.value = withSpring(1.35, spring.card);
+  };
+  const handleOut = () => {
+    if (!reduced) press.value = withSpring(active ? 1 : 0, spring.navigation);
+  };
+
+  return (
+    <Animated.View
+      pointerEvents="box-none"
+      style={[
+        styles.pod,
+        {
+          left: pod.x - LABEL_WIDTH / 2,
+          top: pod.y - POD_ABOVE,
+          width: LABEL_WIDTH,
+          height: POD_ABOVE + POD_BELOW,
+        },
+        podStyle,
+      ]}
+    >
+      <MotionPressable
+        accessibilityRole="button"
+        accessibilityLabel={`${CATEGORY_LABELS[category]}: ${item.xp} XP, ${item.questsCompleted} выполнено`}
+        accessibilityHint="Показать подробности области"
+        accessibilityState={{ selected: active }}
+        onPress={onPress}
+        onPressIn={handleIn}
+        onPressOut={handleOut}
+        style={styles.podInner}
+      >
+        <View style={styles.podBadgeSlot}>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.podRing,
+              { borderColor: color, borderRadius: BADGE_SIZE / 2 },
+              ringStyle,
+            ]}
+          />
+          <View
+            style={[
+              styles.podBadge,
+              { backgroundColor: surface, borderColor: color, borderRadius: BADGE_SIZE / 2 },
+            ]}
+          >
+            <LucideIcon name={CATEGORY_ICONS[category]} size={19} color={color} strokeWidth={2.2} />
+          </View>
+        </View>
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.72}
+          style={[
+            styles.podName,
+            { top: BADGE_SIZE + POD_LABEL_GAP, color: colors.textSecondary },
+          ]}
+        >
+          {CATEGORY_LABELS[category]}
+        </Text>
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.podValue,
+            { top: BADGE_SIZE + POD_LABEL_GAP + LABEL_HEIGHT + VALUE_GAP, color },
+          ]}
+        >
+          {item.xp}
+        </Text>
+        {active ? (
+          <View style={[styles.podActiveBar, { backgroundColor: color, borderRadius: radius.pill }]} />
+        ) : null}
+      </MotionPressable>
+    </Animated.View>
   );
 }
 
@@ -367,33 +533,30 @@ function interpolatePath(from: number[], to: number[], progress: number, center:
 const styles = StyleSheet.create({
   container: { width: '100%', alignItems: 'center' },
   chart: { alignItems: 'center' },
-  badge: {
-    position: 'absolute',
-    width: BADGE_SIZE,
-    height: BADGE_SIZE,
-    borderRadius: BADGE_SIZE / 2,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  categoryName: {
+  pod: { position: 'absolute' },
+  podInner: { flex: 1, alignItems: 'center' },
+  podBadgeSlot: { width: BADGE_SIZE, height: BADGE_SIZE, alignItems: 'center', justifyContent: 'center' },
+  podRing: { position: 'absolute', width: BADGE_SIZE + 10, height: BADGE_SIZE + 10, borderWidth: 1.5 },
+  podBadge: { width: BADGE_SIZE, height: BADGE_SIZE, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  podName: {
     position: 'absolute',
     width: LABEL_WIDTH,
     fontFamily: 'Nunito',
-    fontSize: 9,
-    lineHeight: 12,
+    fontSize: 9.5,
+    lineHeight: LABEL_HEIGHT,
     textAlign: 'center',
   },
-  categoryValue: {
+  podValue: {
     position: 'absolute',
     width: LABEL_WIDTH,
     fontFamily: 'Nunito',
     fontSize: 13,
-    lineHeight: 16,
+    lineHeight: VALUE_HEIGHT,
     fontWeight: '800',
     textAlign: 'center',
     fontVariant: ['tabular-nums'],
   },
+  podActiveBar: { position: 'absolute', bottom: -3, width: 16, height: 2.5 },
   pulse: { position: 'absolute', width: 18, height: 18, borderRadius: 9 },
 });
 

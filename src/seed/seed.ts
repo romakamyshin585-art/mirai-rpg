@@ -2,14 +2,24 @@
  * Boot-time seed. Idempotent: only inserts missing rows.
  *
  *   - achievement_def: insert all codes (insertDef checks for existing code)
- *   - quest: insert all 76 system quests (only if catalog is empty)
+ *   - quest: insert every shipped system quest whose title is not in the
+ *     catalogue yet.
+ *
+ * The quest rule used to be "only if the catalogue is empty". That was
+ * fine with one wave of quests and wrong the moment a second wave shipped:
+ * an existing profile would never see the new 150. It now diffs on title,
+ * which keeps the boot idempotent *and* additive.
+ *
+ * Archiving is respected. `setActive(0)` is a soft delete on the row, so a
+ * quest the user removed stays in the table and the title diff skips it —
+ * the seeder never resurrects it.
  */
 
 import type { DbExecutor } from '../db/executor';
 import { AchievementRepo } from '../repos/achievement_repo';
 import { QuestRepo } from '../repos/quest_repo';
 import { ACHIEVEMENT_SEED } from './achievements';
-import { QUEST_SEED } from './quests';
+import { QUEST_SEED_ALL } from './quests';
 
 export async function seedIfEmpty(db: DbExecutor): Promise<{ achievementsInserted: number; questsInserted: number }> {
   return db.withTransaction(async (tx) => {
@@ -24,22 +34,25 @@ export async function seedIfEmpty(db: DbExecutor): Promise<{ achievementsInserte
       aInserted += 1;
     }
 
+    // One query for every known title, then insert only the diff. The
+    // catalogue is a few hundred rows, so this stays a single read
+    // instead of a SELECT per quest.
+    const existingTitles = new Set((await qRepo.listSystem()).map(quest => quest.title));
     let qInserted = 0;
-    const existing = await qRepo.listSystem();
-    if (existing.length === 0) {
-      for (const q of QUEST_SEED) {
-        await qRepo.insert({
-          user_id: null,
-          title: q.title,
-          description: q.description,
-          category: q.category,
-          difficulty: q.difficulty,
-          xp_reward: q.xp_reward,
-          is_system: 1,
-          is_active: 1,
-        });
-        qInserted += 1;
-      }
+    for (const quest of QUEST_SEED_ALL) {
+      if (existingTitles.has(quest.title)) continue;
+      await qRepo.insert({
+        user_id: null,
+        title: quest.title,
+        description: quest.description,
+        category: quest.category,
+        difficulty: quest.difficulty,
+        xp_reward: quest.xp_reward,
+        is_system: 1,
+        is_active: 1,
+      });
+      existingTitles.add(quest.title);
+      qInserted += 1;
     }
 
     return { achievementsInserted: aInserted, questsInserted: qInserted };

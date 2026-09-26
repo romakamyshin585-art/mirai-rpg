@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { Easing, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import type { AppContext } from '../app_context';
 import type { QuestRow } from '../../repos/quest_repo';
 import { CATEGORIES, type Category } from '../../domain/category';
@@ -10,6 +10,7 @@ import { LucideIcon } from '../components';
 import type { MorphOrigin } from '../components/Overlay';
 import { CreateQuestModal } from '../create_quest_modal';
 import { FocusModeModal } from '../components/FocusModeModal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { MotionPressable } from '../components/MotionPressable';
 import { HAPTIC_EVENTS, duration, scale, spring, useHaptics, useReducedMotion } from '../motion';
 import { MotionProgressBar } from '../components/MotionProgressBar';
@@ -43,13 +44,30 @@ type QuestsScreenProps = {
   revision: number;
   onDataChanged: () => void;
   onQuestCompleted: (notice: QuestCompletionNotice) => void;
+  /** Category filter pushed from Home (radar axis sheet). */
+  filter?: Category | 'all' | null;
+  onFilterConsumed?: () => void;
+  /** A specific quest to open, e.g. from a recommendation on Home. */
+  targetQuest?: { id: string; nonce: number } | null;
+  onTargetConsumed?: () => void;
 };
 
-export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }: QuestsScreenProps) {
+export function QuestsScreen({
+  ctx,
+  revision,
+  onDataChanged,
+  onQuestCompleted,
+  filter,
+  onFilterConsumed,
+  targetQuest,
+  onTargetConsumed,
+}: QuestsScreenProps) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const insets = useSafeAreaInsets();
   const { trigger } = useHaptics();
-  const [filter, setFilter] = useState<Category | 'all'>('all');
+  const reduced = useReducedMotion();
+  const [activeFilter, setActiveFilter] = useState<Category | 'all'>('all');
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const [quests, setQuests] = useState<QuestRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,44 +75,32 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
   const [undoing, setUndoing] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [morphOrigin, setMorphOrigin] = useState<MorphOrigin | undefined>(undefined);
-  // One shared value drives both the FAB icon and the sheet it opens, so
+  const [pendingArchive, setPendingArchive] = useState<QuestRow | null>(null);
+  // One shared value drives both the add icon and the sheet it opens, so
   // the two halves of the transition cannot drift apart.
   const createProgress = useSharedValue(0);
-  const fabHolderRef = useRef<View>(null);
+  const addHolderRef = useRef<View>(null);
   const [focusQuest, setFocusQuest] = useState<QuestRow | null>(null);
   const [completedIds, setCompletedIds] = useState<Set<string>>(() => new Set());
   const loadedOnce = useRef(false);
   const requestId = useRef(0);
   const latestCompletionByQuest = useRef(new Map<string, string>());
-  // The FAB floats over the list, so it used to sit on top of a card's
-  // "Готово" button while scrolling. It now gets out of the way: hidden
-  // while scrolling down, back as soon as the user scrolls up.
-  const fabVisible = useSharedValue(1);
-  const lastScrollY = useRef(0);
-  const onListScroll = useAnimatedScrollHandler({
-    onScroll: event => {
-      const y = event.contentOffset.y;
-      const delta = y - lastScrollY.current;
-      if (Math.abs(delta) < 4) return;
-      lastScrollY.current = y;
-      fabVisible.value = delta > 0 ? 0 : 1;
-    },
-  });
   const fabStyle = useAnimatedStyle(() => ({
-    opacity: fabVisible.value,
-    transform: [
-      { scale: 0.85 + fabVisible.value * 0.15 },
-      { translateY: (1 - fabVisible.value) * 12 },
-    ],
+    transform: reduced
+      ? []
+      : [
+          { scale: 0.9 + createProgress.value * 0.1 },
+          { rotate: `${45 * createProgress.value}deg` },
+        ],
   }));
-  const fabIconStyle = useAnimatedStyle(() => ({
-    // "+" rotating into "x" as the sheet unfolds out of it.
-    transform: [{ rotate: `${45 * (1 - createProgress.value)}deg` }],
+  const addGlowStyle = useAnimatedStyle(() => ({
+    opacity: 0.35 + createProgress.value * 0.65,
+    transform: reduced ? [] : [{ scale: 1 + createProgress.value * 0.55 }],
   }));
 
-  /** Measure the FAB so the sheet can unfold from exactly that point. */
+  /** Measure the add button so the sheet can unfold from exactly that point. */
   const openCreate = useCallback(() => {
-    const node = fabHolderRef.current;
+    const node = addHolderRef.current;
     if (!node) {
       setShowCreate(true);
       return;
@@ -116,7 +122,7 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
     if (!loadedOnce.current) setLoading(true);
     setError(null);
     try {
-      const rows = await ctx.quest.list(ctx.userId, filter === 'all' ? undefined : { category: filter });
+      const rows = await ctx.quest.list(ctx.userId, activeFilter === 'all' ? undefined : { category: activeFilter });
       if (currentRequest === requestId.current) setQuests(rows);
       loadedOnce.current = true;
     } catch (value) {
@@ -124,11 +130,42 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
     } finally {
       if (currentRequest === requestId.current) setLoading(false);
     }
-  }, [ctx, filter]);
+  }, [ctx, activeFilter]);
 
   useEffect(() => {
     void reload();
   }, [reload, revision]);
+
+  // Filter pushed from Home's radar axis sheet.
+  useEffect(() => {
+    if (filter === undefined || filter === null) return;
+    setActiveFilter(filter);
+    onFilterConsumed?.();
+  }, [filter, onFilterConsumed]);
+
+  /**
+   * Quest hand-off from Home. The quest may not be in the list yet (the
+   * screen mounts and loads asynchronously, and a pushed filter could hide
+   * it), so the request is parked until the list contains it. Clearing the
+   * filter first guarantees a single code path.
+   */
+  useEffect(() => {
+    if (!targetQuest) return;
+    if (activeFilter !== 'all') setActiveFilter('all');
+  }, [targetQuest, activeFilter]);
+
+  useEffect(() => {
+    if (!targetQuest || quests.length === 0) return;
+    const match = quests.find(quest => quest.id === targetQuest.id);
+    if (!match) return;
+    setActiveFilter('all');
+    setHighlightId(match.id);
+    setFocusQuest(match);
+    void trigger(HAPTIC_EVENTS.modalOpen);
+    const timer = setTimeout(() => setHighlightId(null), 900);
+    onTargetConsumed?.();
+    return () => clearTimeout(timer);
+  }, [onTargetConsumed, quests, targetQuest, trigger]);
 
   const summary = useMemo(() => {
     const totalXp = quests.reduce((sum, quest) => sum + quest.xp_reward, 0);
@@ -218,25 +255,20 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
   };
 
   const confirmArchive = (quest: QuestRow) => {
-    Alert.alert(
-      'Удалить квест?',
-      `«${quest.title}» исчезнет из списка. Завершения останутся в истории.`,
-      [
-        { text: 'Отмена', style: 'cancel' },
-        {
-          text: 'Удалить',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await ctx.quest.archive(quest.id);
-              onDataChanged();
-            } catch (value) {
-              Alert.alert('Ошибка', value instanceof Error ? value.message : String(value));
-            }
-          },
-        },
-      ],
-    );
+    setPendingArchive(quest);
+  };
+
+  const runArchive = async () => {
+    const quest = pendingArchive;
+    if (!quest) return;
+    try {
+      await ctx.quest.archive(quest.id);
+      setPendingArchive(null);
+      onDataChanged();
+    } catch (value) {
+      setPendingArchive(null);
+      Alert.alert('Ошибка', value instanceof Error ? value.message : String(value));
+    }
   };
 
   const createQuest = async (data: {
@@ -257,7 +289,7 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
       xp_reward: data.xp_reward,
     });
     // A new quest must be visible right away, so drop any active filter.
-    setFilter('all');
+    setActiveFilter('all');
     onDataChanged();
   };
 
@@ -267,6 +299,7 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
       busy={busy === item.id}
       disabled={operationLocked}
       completed={completedIds.has(item.id)}
+      highlighted={highlightId === item.id}
       onComplete={() => void complete(item)}
       onOpen={() => {
         setFocusQuest(item);
@@ -280,32 +313,46 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <View style={styles.titleRow}>
-          <View>
+          <View style={styles.titleCopy}>
             <Text style={[styles.title, typography.title, { color: colors.text }]}>Квесты</Text>
             <Text style={[styles.subtitle, typography.caption, { color: colors.textMuted }]}>Выбери действие и преврати его в прогресс</Text>
           </View>
+          <Animated.View
+            pointerEvents="box-none"
+            ref={addHolderRef}
+            collapsable={false}
+            style={styles.addHolder}
+          >
+            <MotionPressable
+              accessibilityRole="button"
+              accessibilityLabel="Добавить квест"
+              disabled={operationLocked}
+              onPress={openCreate}
+              style={[
+                styles.addButton,
+                {
+                  backgroundColor: colors.accentSoft,
+                  borderColor: `${colors.accent}66`,
+                  borderRadius: radius.pill,
+                  opacity: operationLocked ? 0.5 : 1,
+                },
+              ]}
+            >
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.addGlow, { backgroundColor: colors.accent }, addGlowStyle]}
+              />
+              <Animated.View style={fabStyle}>
+                <LucideIcon name="plus" size={23} color={colors.accent} strokeWidth={2.7} />
+              </Animated.View>
+            </MotionPressable>
+          </Animated.View>
           <View style={[styles.countBadge, { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle }]}>
             <Text style={[styles.countValue, typography.numeric, { color: colors.accent }]}>{quests.length}</Text>
             <Text style={[styles.countLabel, typography.caption, { color: colors.textMuted }]}>активных</Text>
           </View>
         </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.filters}
-        >
-          <FilterChip label="Все" active={filter === 'all'} onPress={() => setFilter('all')} />
-          {CATEGORIES.map(category => (
-            <FilterChip
-              key={category}
-              label={CATEGORY_LABELS[category]}
-              active={filter === category}
-              color={colors[`cat${category.charAt(0).toUpperCase()}${category.slice(1)}` as keyof typeof colors]}
-              onPress={() => setFilter(category)}
-            />
-          ))}
-        </ScrollView>
+        <FilterRow value={activeFilter} onChange={setActiveFilter} />
       </View>
 
       {loading ? (
@@ -332,14 +379,19 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
           keyExtractor={item => item.id}
           renderItem={renderQuest}
           initialNumToRender={10}
-          windowSize={7}
-          removeClippedSubviews
+          maxToRenderPerBatch={8}
+          windowSize={9}
+          // `removeClippedSubviews` is deliberately NOT enabled. On
+          // Android/Fabric it detaches rows that are still on screen and
+          // never re-attaches them reliably, which is exactly the "scroll
+          // down and the whole list turns into background" report. The
+          // list is windowed, so the memory argument for it does not
+          // apply here anyway.
+          removeClippedSubviews={false}
           showsVerticalScrollIndicator={false}
-          onScroll={onListScroll}
-          scrollEventThrottle={16}
           contentContainerStyle={[
             styles.listContent,
-            { paddingBottom: BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 96 },
+            { paddingBottom: BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 32 },
           ]}
           ListHeaderComponent={
             quests.length > 0 ? (
@@ -380,39 +432,6 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
         />
       )}
 
-      <Animated.View
-        pointerEvents="box-none"
-        ref={fabHolderRef}
-        collapsable={false}
-        style={[
-          styles.fabHolder,
-          {
-            right: 16,
-            bottom: BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 16,
-          },
-        ]}
-      >
-        <MotionPressable
-          accessibilityRole="button"
-          accessibilityLabel="Добавить квест"
-          disabled={operationLocked}
-          onPress={openCreate}
-          style={[
-            styles.fab,
-            {
-              backgroundColor: colors.accent,
-              borderRadius: radius.pill,
-              opacity: operationLocked ? 0.5 : 1,
-            },
-            fabStyle,
-          ]}
-        >
-          <Animated.View style={fabIconStyle}>
-            <LucideIcon name="plus" size={28} color={colors.textInverse} strokeWidth={2.5} />
-          </Animated.View>
-        </MotionPressable>
-      </Animated.View>
-
       <CreateQuestModal
         visible={showCreate}
         onClose={() => setShowCreate(false)}
@@ -426,6 +445,17 @@ export function QuestsScreen({ ctx, revision, onDataChanged, onQuestCompleted }:
         onClose={() => setFocusQuest(null)}
         onComplete={completeFromFocus}
       />
+      <ConfirmDialog
+        visible={pendingArchive !== null}
+        title="Удалить квест?"
+        subject={pendingArchive ? `«${pendingArchive.title}»` : ''}
+        message="Квест исчезнет из списка. Завершения останутся в истории и в календаре."
+        icon="trash-2"
+        confirmLabel="Удалить"
+        cancelLabel="Оставить"
+        onConfirm={() => void runArchive()}
+        onCancel={() => setPendingArchive(null)}
+      />
     </View>
   );
 }
@@ -435,12 +465,14 @@ type QuestCardProps = {
   busy: boolean;
   disabled: boolean;
   completed: boolean;
+  /** Arrived here from a Home recommendation — give it a one-shot glow. */
+  highlighted?: boolean;
   onComplete: () => void;
   onOpen: () => void;
   onArchive: () => void;
 };
 
-function QuestCard({ quest, busy, disabled, completed, onComplete, onOpen, onArchive }: QuestCardProps) {
+function QuestCard({ quest, busy, disabled, completed, highlighted = false, onComplete, onOpen, onArchive }: QuestCardProps) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const reduced = useReducedMotion();
   const categoryColor = colors[`cat${quest.category.charAt(0).toUpperCase()}${quest.category.slice(1)}` as keyof typeof colors];
@@ -448,6 +480,24 @@ function QuestCard({ quest, busy, disabled, completed, onComplete, onOpen, onArc
   const checkProgress = useSharedValue(1);
   const xpOpacity = useSharedValue(0);
   const xpOffset = useSharedValue(0);
+  const halo = useSharedValue(0);
+
+  useEffect(() => {
+    if (!highlighted) {
+      halo.value = withTiming(0, { duration: duration.micro });
+      return;
+    }
+    // Hand-off glow: rise, hold, fade. One shot, no loop.
+    halo.value = reduced
+      ? withSequence(
+          withTiming(1, { duration: duration.reducedMotion }),
+          withDelay(320, withTiming(0, { duration: duration.reducedMotion })),
+        )
+      : withSequence(
+          withTiming(1, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
+          withDelay(320, withTiming(0, { duration: duration.major, easing: Easing.in(Easing.cubic) })),
+        );
+  }, [halo, highlighted, reduced]);
 
   useEffect(() => {
     if (!completed) {
@@ -479,6 +529,10 @@ function QuestCard({ quest, busy, disabled, completed, onComplete, onOpen, onArc
   const cardStyle = useAnimatedStyle(() => ({
     transform: reduced ? [] : [{ scale: pressProgress.value }],
   }));
+  const haloStyle = useAnimatedStyle(() => ({
+    opacity: halo.value,
+    transform: reduced ? [] : [{ scale: 0.985 + halo.value * 0.015 }],
+  }));
   const checkStyle = useAnimatedStyle(() => ({
     transform: reduced ? [] : [{ scale: checkProgress.value }],
   }));
@@ -494,7 +548,16 @@ function QuestCard({ quest, busy, disabled, completed, onComplete, onOpen, onArc
   };
 
   return (
-    <Animated.View
+    <Animated.View style={styles.questCardHaloWrap}>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.questCardHalo,
+          { borderRadius: radius.lg, backgroundColor: `${colors.accent}1F`, borderColor: colors.accent },
+          haloStyle,
+        ]}
+      />
+      <Animated.View
       style={[
         styles.questCard,
         {
@@ -600,28 +663,114 @@ function QuestCard({ quest, busy, disabled, completed, onComplete, onOpen, onArc
         accessibilityLabel={completed ? 'Квест выполнен' : 'Прогресс квеста'}
       />
     </Animated.View>
+    </Animated.View>
   );
 }
 
-function FilterChip({ label, active, color, onPress }: { label: string; active: boolean; color?: string; onPress: () => void }) {
-  const { colors, radius, typographyStylesheet: typography } = useTheme();
-  const tint = color ?? colors.accent;
+/**
+ * Category filter row.
+ *
+ * The active chip used to be distinguished only by a colour swap, so a tap
+ * on a neighbouring chip read as an instant repaint. The selection now
+ * travels: a tinted pill slides between chips and resizes to the target,
+ * which is the same "one object moved" trick the tab bar uses.
+ */
+function FilterRow({
+  value,
+  onChange,
+}: {
+  value: Category | 'all';
+  onChange: (next: Category | 'all') => void;
+}) {
+  const { colors, typographyStylesheet: typography } = useTheme();
+  const reduced = useReducedMotion();
+  const options: Array<{ key: Category | 'all'; label: string; color: string }> = useMemo(
+    () => [
+      { key: 'all' as const, label: 'Все', color: colors.accent },
+      ...CATEGORIES.map(category => ({
+        key: category,
+        label: CATEGORY_LABELS[category],
+        color: colors[`cat${category.charAt(0).toUpperCase()}${category.slice(1)}` as keyof typeof colors],
+      })),
+    ],
+    [colors],
+  );
+  const [widths, setWidths] = useState<Record<string, number>>({});
+  const [offsets, setOffsets] = useState<Record<string, number>>({});
+  const pillX = useSharedValue(0);
+  const pillW = useSharedValue(0);
+  const ready = widths[value] !== undefined;
+
+  useEffect(() => {
+    const x = offsets[value];
+    const w = widths[value];
+    if (x === undefined || w === undefined) return;
+    if (reduced) {
+      pillX.value = x;
+      pillW.value = w;
+      return;
+    }
+    pillX.value = withSpring(x, spring.navigation);
+    pillW.value = withSpring(w, spring.navigation);
+  }, [offsets, pillW, pillX, reduced, value, widths]);
+
+  const pillStyle = useAnimatedStyle(() => ({
+    width: pillW.value,
+    transform: [{ translateX: pillX.value }],
+  }));
+
   return (
-    <MotionPressable
-      accessibilityRole="button"
-      accessibilityState={{ selected: active }}
-      onPress={onPress}
-      style={[
-        styles.filter,
-        {
-          backgroundColor: active ? `${tint}22` : colors.surface,
-          borderColor: active ? `${tint}88` : colors.borderSubtle,
-          borderRadius: radius.pill,
-        },
-      ]}
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={styles.filters}
     >
-      <Text style={[styles.filterLabel, typography.caption, { color: active ? tint : colors.textMuted, fontWeight: active ? '800' : '600' }]}>{label}</Text>
-    </MotionPressable>
+      {options.map(option => {
+        const active = option.key === value;
+        return (
+          <MotionPressable
+            key={option.key}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            accessibilityLabel={option.label}
+            onPress={() => onChange(option.key)}
+            onLayout={event => {
+              const { x, width } = event.nativeEvent.layout;
+              setWidths(current => (current[option.key] === width ? current : { ...current, [option.key]: width }));
+              setOffsets(current => (current[option.key] === x ? current : { ...current, [option.key]: x }));
+            }}
+            style={styles.filterHit}
+          >
+            <Text
+              style={[
+                styles.filterLabel,
+                typography.caption,
+                {
+                  color: active ? colors.text : colors.textMuted,
+                  fontWeight: active ? '800' : '600',
+                },
+              ]}
+            >
+              {option.label}
+            </Text>
+          </MotionPressable>
+        );
+      })}
+      {ready ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.filterPill,
+            {
+              backgroundColor: `${options.find(option => option.key === value)?.color ?? colors.accent}22`,
+              borderColor: `${options.find(option => option.key === value)?.color ?? colors.accent}88`,
+            },
+            pillStyle,
+          ]}
+        />
+      ) : null}
+    </ScrollView>
   );
 }
 
@@ -629,13 +778,15 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { paddingHorizontal: 16, paddingBottom: 10 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  titleCopy: { flex: 1, minWidth: 0 },
   title: { fontSize: 27, lineHeight: 34 },
   subtitle: { marginTop: 2 },
   countBadge: { minWidth: 66, height: 52, borderWidth: 1, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   countValue: { fontSize: 18, lineHeight: 22 },
   countLabel: { fontSize: 10, lineHeight: 13 },
-  filters: { gap: 8, paddingTop: 14, paddingRight: 16 },
-  filter: { minHeight: 40, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  filters: { gap: 8, paddingTop: 14, paddingRight: 16, paddingLeft: 4 },
+  filterHit: { height: 40, paddingHorizontal: 15, alignItems: 'center', justifyContent: 'center' },
+  filterPill: { position: 'absolute', top: 14, left: 0, height: 40, borderRadius: 20, borderWidth: 1 },
   filterLabel: { fontSize: 12, lineHeight: 16 },
   centerState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 10 },
   stateTitle: { fontFamily: 'Nunito', fontSize: 17, lineHeight: 23, fontWeight: '800', textAlign: 'center' },
@@ -648,6 +799,8 @@ const styles = StyleSheet.create({
   summaryValue: { fontSize: 18, lineHeight: 22 },
   summaryLabel: { marginTop: 1 },
   summaryDivider: { width: 1, height: 30 },
+  questCardHaloWrap: { position: 'relative' },
+  questCardHalo: { position: 'absolute', top: -3, left: -3, right: -3, bottom: -3, borderWidth: 1.5 },
   questCard: { borderWidth: 1, padding: 14, position: 'relative', overflow: 'hidden' },
   xpBurst: { position: 'absolute', top: 8, right: 14, zIndex: 2 },
   xpBurstText: { fontFamily: 'Nunito', fontSize: 14, lineHeight: 18, fontWeight: '900' },
@@ -674,6 +827,10 @@ const styles = StyleSheet.create({
   completeLabel: { fontFamily: 'Nunito', fontSize: 13, lineHeight: 17, fontWeight: '800' },
   empty: { alignItems: 'center', paddingVertical: 54, paddingHorizontal: 24 },
   emptyIcon: { width: 72, height: 72, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
-  fabHolder: { position: 'absolute', zIndex: 20, elevation: 8 },
-  fab: { width: 58, height: 58, alignItems: 'center', justifyContent: 'center' },
+  // The add control lives in the header row: a corner FAB floated over
+  // the list and sat on top of a card's "Готово" button, which is what
+  // made the screen feel crowded. In the header it competes with nothing.
+  addHolder: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
+  addButton: { width: 46, height: 46, borderWidth: 1, alignItems: 'center', justifyContent: 'center', overflow: 'visible' },
+  addGlow: { position: 'absolute', width: 46, height: 46, borderRadius: 23, opacity: 0.3 },
 });

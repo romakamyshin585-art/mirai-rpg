@@ -1,0 +1,12 @@
+{
+  "name": "mirai-haptics",
+  "version": "0.1.0",
+  "description": "Android 10+ predefined vibration effects via VibrationEffect.createPredefined",
+  "main": "index.ts",
+  "private": true,
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

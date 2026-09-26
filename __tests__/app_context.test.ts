@@ -120,7 +120,7 @@ describe('AppContext seed idempotency with pre-existing achievements', () => {
     const result2 = await seedIfEmpty(db); // Second call - should be idempotent
     
     expect(result1.achievementsInserted).toBe(17);
-    expect(result1.questsInserted).toBe(76);
+    expect(result1.questsInserted).toBe(226); // 76 wave-1 + 150 wave-2
     expect(result2.achievementsInserted).toBe(0);
     expect(result2.questsInserted).toBe(0);
   });

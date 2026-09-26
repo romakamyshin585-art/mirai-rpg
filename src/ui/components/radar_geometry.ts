@@ -12,15 +12,33 @@
  * the UI thread. Gradients are therefore declared in userSpaceOnUse units
  * derived from this geometry, and the polygon is never allowed to be
  * degenerate.
+ *
+ * Second responsibility, added after the labels were found sitting on top
+ * of the "Итоги недели" card: every per-axis element is a single "pod"
+ * (badge + name + value) whose *whole* extent is fitted into the box, not
+ * just its centre. `safePodRadius` derives the outermost radius the pods
+ * can occupy from the pod's real half-heights, so no screen width can
+ * push a label outside the card — the pod bounds are asserted directly by
+ * the test suite instead of being taken on trust.
  */
 
 export const MIN_BOX = 236;
 export const MAX_BOX = 340;
-export const BADGE_SIZE = 42;
-export const BADGE_GAP = 30;
-export const LABEL_OFFSET = 30;
-export const LABEL_WIDTH = 78;
-export const LABEL_HALF_HEIGHT = 15;
+export const BADGE_SIZE = 40;
+export const BADGE_GAP = 16;
+/** Gap between the bottom of the badge and the axis name. */
+export const POD_LABEL_GAP = 5;
+export const LABEL_WIDTH = 84;
+export const LABEL_HEIGHT = 12;
+export const VALUE_HEIGHT = 16;
+export const VALUE_GAP = 2;
+/** Pod extent above / below its badge centre. */
+export const POD_ABOVE = BADGE_SIZE / 2;
+export const POD_BELOW = POD_LABEL_GAP + LABEL_HEIGHT + VALUE_GAP + VALUE_HEIGHT;
+export const POD_HEIGHT = POD_ABOVE + POD_BELOW;
+/** Kept as the single "half height" figure so a pod can never leave the box. */
+export const LABEL_HALF_HEIGHT = Math.max(POD_ABOVE, POD_BELOW);
+export const POD_MARGIN = 3;
 export const MIN_AXIS_RATIO = 0.08;
 export const GRID_LEVELS = 4;
 export const ANGLE_OFFSET = -Math.PI / 2;
@@ -30,7 +48,9 @@ export type Point = { x: number; y: number };
 export type RadarGeometry = {
   box: number;
   center: number;
+  /** Radius of the outermost grid ring. Vertices live inside it. */
   maxRadius: number;
+  /** Distance from the centre to a pod's badge centre. */
   badgeRadius: number;
   angles: number[];
 };
@@ -44,24 +64,50 @@ export function clamp(value: number, min: number, max: number): number {
 }
 
 /**
+ * Largest radius at which every pod still fits inside the box.
+ *
+ * For an axis that points up, only the pod's *upper* half can leave the
+ * box; for one that points down, only its lower half. Axes close to
+ * horizontal additionally have to clear half the label width sideways.
+ * Taking the minimum over all axes makes this correct for any axis count
+ * and any angle offset, not just the five-axis portrait layout.
+ */
+export function safePodRadius(box: number, angles: number[]): number {
+  const center = box / 2;
+  const halfLabel = LABEL_WIDTH / 2;
+  let limit = center;
+  for (const angle of angles) {
+    const cos = Math.abs(Math.cos(angle));
+    const sin = Math.sin(angle);
+    const absSin = Math.abs(sin);
+    if (cos > 1e-3) {
+      limit = Math.min(limit, (center - halfLabel - POD_MARGIN) / cos);
+    }
+    if (absSin > 1e-3) {
+      const need = sin < 0 ? POD_ABOVE : POD_BELOW;
+      limit = Math.min(limit, (center - need - POD_MARGIN) / absSin);
+    }
+  }
+  return Math.max(24, limit);
+}
+
+/**
  * @param measuredWidth width reported by onLayout. 0 means "not laid out
- * yet" and yields the fallback box so nothing renders at radius 0.
+ *  yet" and yields the fallback box so nothing renders at radius 0.
  * @param axes number of axes.
  */
 export function computeRadarGeometry(measuredWidth: number, axes: number, fallbackWidth = MIN_BOX): RadarGeometry {
   const width = measuredWidth > 0 ? measuredWidth : fallbackWidth;
   const box = clamp(width, MIN_BOX, MAX_BOX);
   const center = box / 2;
-  // Reserve room for the outermost element: a label sitting on the top
-  // axis, which is the element furthest from the centre.
-  const reserved = LABEL_OFFSET + LABEL_HALF_HEIGHT + BADGE_GAP;
-  const maxRadius = Math.max(40, center - reserved);
+  const angles = Array.from({ length: Math.max(3, axes) }, (_, index) => ANGLE_OFFSET + (index / Math.max(3, axes)) * 2 * Math.PI);
+  const badgeRadius = safePodRadius(box, angles);
   return {
     box,
     center,
-    maxRadius,
-    badgeRadius: maxRadius + BADGE_GAP,
-    angles: Array.from({ length: axes }, (_, index) => ANGLE_OFFSET + (index / axes) * 2 * Math.PI),
+    maxRadius: Math.max(40, badgeRadius - BADGE_GAP),
+    badgeRadius,
+    angles,
   };
 }
 
@@ -103,20 +149,32 @@ export function polygonPath(flat: number[], center: number, factor: number): str
 }
 
 /**
- * Label anchor for a vertex: pushed further out along the same axis, then
- * clamped inside the box so a label can never overlap the card edge or
- * the bottom navigation.
+ * Pod anchor: where a per-axis badge + label block is centred.
+ *
+ * Clamped to the box on both axes using the pod's real extents, so the
+ * block can never overlap the card border — the failure that put the
+ * axis names on top of the neighbouring card.
  */
-export function labelAnchor(geometry: RadarGeometry, index: number): { x: number; y: number } {
+export function podAnchor(geometry: RadarGeometry, index: number): Point {
   const angle = geometry.angles[index] ?? ANGLE_OFFSET;
-  const raw = point(geometry.center, geometry.badgeRadius + LABEL_OFFSET, angle);
+  const raw = point(geometry.center, geometry.badgeRadius, angle);
   const halfWidth = LABEL_WIDTH / 2;
   return {
     x: clamp(raw.x, halfWidth, geometry.box - halfWidth),
-    y: clamp(raw.y, LABEL_HALF_HEIGHT, geometry.box - LABEL_HALF_HEIGHT),
+    y: clamp(raw.y, POD_ABOVE, geometry.box - POD_BELOW),
   };
 }
 
+/** Top-left corner of the pod's bounding box, for absolute positioning. */
+export function podOrigin(geometry: RadarGeometry, index: number): Point {
+  const pod = podAnchor(geometry, index);
+  return { x: pod.x - LABEL_WIDTH / 2, y: pod.y - POD_ABOVE };
+}
+
 export function badgeAnchor(geometry: RadarGeometry, index: number): Point {
-  return point(geometry.center, geometry.badgeRadius, geometry.angles[index] ?? ANGLE_OFFSET);
+  return podAnchor(geometry, index);
+}
+
+export function labelAnchor(geometry: RadarGeometry, index: number): Point {
+  return podAnchor(geometry, index);
 }

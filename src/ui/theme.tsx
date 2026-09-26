@@ -26,11 +26,19 @@ import { duration, spring } from './motion/tokens';
 
 // --- Semantic Color Tokens (Dark mode primary) ---
 const _NEW_COLORS_DARK = {
-  bg: '#0E0F12',
+  /**
+   * AMOLED true black. On this panel an unlit pixel draws no current at
+   * all, so the page background — by far the largest area on screen — is
+   * worth getting as close to #000000 as the design allows. The card
+   * surfaces below stay lighter, so elevation is still carried by the
+   * surface steps and hairline borders rather than by a shadow the panel
+   * cannot show anyway.
+   */
+  bg: '#05060A',
   surface: '#1A1C22',
   surfaceElevated: '#23262E',
   surfaceFloating: '#2A2D36',
-  surfaceOverlay: 'rgba(14, 15, 18, 0.85)',
+  surfaceOverlay: 'rgba(5, 6, 10, 0.85)',
 
   border: '#2E323C',
   borderSubtle: '#1E2128',

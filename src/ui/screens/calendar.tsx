@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, RefreshControl, StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import Animated, { Easing, Extrapolate, interpolate, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
@@ -9,6 +9,7 @@ import type { Category } from '../../domain/category';
 import { BOTTOM_NAV_BASE_HEIGHT, CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
 import { Overlay } from '../components/Overlay';
+import { UndoCompletionDialog } from '../components/ConfirmDialog';
 import { MotionPressable } from '../components/MotionPressable';
 import { duration, spring, useReducedMotion, useScrollHeader } from '../motion';
 
@@ -479,168 +480,194 @@ function DayModal({
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const [expandedCompletionId, setExpandedCompletionId] = useState<string | null>(null);
+  const [pendingUndo, setPendingUndo] = useState<CompletionItem | null>(null);
   const holiday = date ? RUSSIAN_HOLIDAYS_2026.has(dayKey(date)) : false;
   const weekend = date ? date.getDay() === 0 || date.getDay() === 6 : false;
   // Pixel bound instead of a percentage: the sheet sits inside an
   // auto-height wrapper, where a percentage height resolves to `auto`
-  // and the list below never gets a scrollable box.
-  const sheetMaxHeight = Math.max(320, Math.round(windowHeight * 0.78));
+  // and the list below never gets a scrollable box. Clamped against the
+  // real free space so the sheet can never run under the status bar.
+  const sheetMaxHeight = Math.max(320, Math.min(windowHeight * 0.8, windowHeight - insets.top - 32));
+  const overflows = activity.completions.length > 5;
 
   useEffect(() => {
-    if (!date) setExpandedCompletionId(null);
+    if (!date) {
+      setExpandedCompletionId(null);
+      setPendingUndo(null);
+    }
   }, [date]);
 
   const close = () => {
     setExpandedCompletionId(null);
+    setPendingUndo(null);
     onClose();
   };
 
-  const confirmUndo = (item: CompletionItem) => {
+  const requestUndo = (item: CompletionItem) => {
     setExpandedCompletionId(null);
-    Alert.alert(
-      'Отменить выполнение?',
-      `Квест «${item.title}» исчезнет из истории, а ${item.xp} XP будут вычтены из общего прогресса.`,
-      [
-        { text: 'Оставить', style: 'cancel' },
-        {
-          text: 'Отменить выполнение',
-          style: 'destructive',
-          onPress: () => {
-            void onUndo(item.id);
-          },
-        },
-      ],
-    );
+    setPendingUndo(item);
+  };
+
+  const confirmUndo = async () => {
+    const item = pendingUndo;
+    if (!item) return;
+    const done = await onUndo(item.id);
+    if (done) setPendingUndo(null);
   };
 
   return (
-    <Overlay visible={date !== null} onClose={close} align="bottom">
-      {date ? (
-        <View
-          style={[
-            styles.daySheet,
-            {
-              paddingBottom: insets.bottom + 20,
-              maxHeight: sheetMaxHeight,
-              backgroundColor: colors.surface,
-              borderColor: colors.border,
-              borderTopLeftRadius: radius.xl,
-              borderTopRightRadius: radius.xl,
-            },
-          ]}
-        >
-          <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
-          <View style={styles.sheetHeader}>
-            <View style={styles.sheetHeaderCopy}>
-              <Text style={[styles.sheetDate, typography.title, { color: colors.text }]}>{formatDate(date)}</Text>
-              <View style={styles.sheetStatusRow}>
-                <View style={[styles.sheetStatusDot, { backgroundColor: holiday ? colors.catHealth : weekend ? colors.textMuted : colors.success }]} />
-                <Text style={[typography.caption, { color: colors.textMuted }]}>{getDayStatus(date, holiday, weekend)}</Text>
+    <>
+      <Overlay visible={date !== null} onClose={close} align="bottom" panTarget="handle">
+        {date ? (
+          <View
+            style={[
+              styles.daySheet,
+              {
+                paddingBottom: insets.bottom + 20,
+                maxHeight: sheetMaxHeight,
+                backgroundColor: colors.surface,
+                borderColor: colors.border,
+                borderTopLeftRadius: radius.xl,
+                borderTopRightRadius: radius.xl,
+              },
+            ]}
+          >
+            <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
+            <View style={styles.sheetHeader}>
+              <View style={styles.sheetHeaderCopy}>
+                <Text style={[styles.sheetDate, typography.title, { color: colors.text }]}>{formatDate(date)}</Text>
+                <View style={styles.sheetStatusRow}>
+                  <View style={[styles.sheetStatusDot, { backgroundColor: holiday ? colors.catHealth : weekend ? colors.textMuted : colors.success }]} />
+                  <Text style={[typography.caption, { color: colors.textMuted }]}>{getDayStatus(date, holiday, weekend)}</Text>
+                </View>
+              </View>
+              <MotionPressable
+                accessibilityRole="button"
+                accessibilityLabel="Закрыть"
+                onPress={close}
+                style={[styles.closeButton, { backgroundColor: colors.surfaceElevated }]}
+              >
+                <LucideIcon name="x" size={20} color={colors.textSecondary} />
+              </MotionPressable>
+            </View>
+            <View style={[styles.dayTotal, { backgroundColor: colors.accentSoft }]}>
+              <View>
+                <Text style={[typography.caption, { color: colors.textMuted }]}>За этот день</Text>
+                <Text style={[styles.dayXp, typography.numericDisplay, { color: colors.accent }]}>{activity.xp} XP</Text>
+              </View>
+              <View style={styles.dayCount}>
+                <LucideIcon name="list-checks" size={21} color={colors.accent} />
+                <Text style={[typography.bodyStrong, { color: colors.text }]}>{activity.completions.length}</Text>
               </View>
             </View>
-            <MotionPressable
-              accessibilityRole="button"
-              accessibilityLabel="Закрыть"
-              onPress={close}
-              style={[styles.closeButton, { backgroundColor: colors.surfaceElevated }]}
-            >
-              <LucideIcon name="x" size={20} color={colors.textSecondary} />
-            </MotionPressable>
-          </View>
-          <View style={[styles.dayTotal, { backgroundColor: colors.accentSoft }]}>
-            <View>
-              <Text style={[typography.caption, { color: colors.textMuted }]}>За этот день</Text>
-              <Text style={[styles.dayXp, typography.numericDisplay, { color: colors.accent }]}>{activity.xp} XP</Text>
-            </View>
-            <View style={styles.dayCount}>
-              <LucideIcon name="list-checks" size={21} color={colors.accent} />
-              <Text style={[typography.bodyStrong, { color: colors.text }]}>{activity.completions.length}</Text>
-            </View>
-          </View>
-          {undoError ? (
-            <View style={[styles.undoError, { backgroundColor: colors.dangerSoft, borderColor: colors.danger }]}>
-              <LucideIcon name="circle-alert" size={17} color={colors.danger} />
-              <Text style={[typography.caption, { color: colors.danger, flex: 1 }]}>{undoError}</Text>
-            </View>
-          ) : null}
-          {activity.completions.length === 0 ? (
-            <View style={styles.emptyDay}>
-              <View style={[styles.emptyIcon, { backgroundColor: colors.surfaceElevated }]}>
-                <LucideIcon name="moon" size={28} color={colors.textMuted} />
+            {undoError ? (
+              <View style={[styles.undoError, { backgroundColor: colors.dangerSoft, borderColor: colors.danger }]}>
+                <LucideIcon name="circle-alert" size={17} color={colors.danger} />
+                <Text style={[typography.caption, { color: colors.danger, flex: 1 }]}>{undoError}</Text>
               </View>
-              <Text style={[typography.bodyStrong, { color: colors.text }]}>В этот день квестов не было</Text>
-              <Text style={[typography.caption, { color: colors.textMuted, textAlign: 'center' }]}>Можно начать новую серию прямо сейчас</Text>
-            </View>
-          ) : (
-            <FlatList
-              data={activity.completions}
-              keyExtractor={item => item.id}
-              bounces={false}
-              showsVerticalScrollIndicator
-              initialNumToRender={12}
-              maxToRenderPerBatch={12}
-              windowSize={7}
-              style={styles.dayList}
-              contentContainerStyle={styles.dayListContent}
-              renderItem={({ item }) => {
-                const categoryColor = colors[`cat${item.category.charAt(0).toUpperCase()}${item.category.slice(1)}` as keyof typeof colors];
-                const expanded = expandedCompletionId === item.id;
-                const undoing = undoingId === item.id;
-                return (
-                  <View
-                    style={[
-                      styles.questRow,
-                      { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, borderRadius: radius.md },
-                    ]}
-                  >
-                    <MotionPressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`${item.title}, ${item.xp} XP`}
-                      accessibilityHint="Показать отмену выполнения"
-                      accessibilityState={{ expanded }}
-                      disabled={Boolean(undoingId)}
-                      onPress={() => setExpandedCompletionId(current => current === item.id ? null : item.id)}
-                      style={[styles.questMain, { opacity: Boolean(undoingId) ? 0.6 : 1 }]}
-                    >
-                      <View style={[styles.questIcon, { backgroundColor: `${categoryColor}20` }]}>
-                        <LucideIcon name="check" size={17} color={categoryColor} />
+            ) : null}
+            {activity.completions.length === 0 ? (
+              <View style={styles.emptyDay}>
+                <View style={[styles.emptyIcon, { backgroundColor: colors.surfaceElevated }]}>
+                  <LucideIcon name="moon" size={28} color={colors.textMuted} />
+                </View>
+                <Text style={[typography.bodyStrong, { color: colors.text }]}>В этот день квестов не было</Text>
+                <Text style={[typography.caption, { color: colors.textMuted, textAlign: 'center' }]}>Можно начать новую серию прямо сейчас</Text>
+              </View>
+            ) : (
+              <>
+                <FlatList
+                  data={activity.completions}
+                  keyExtractor={item => item.id}
+                  bounces={false}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                  initialNumToRender={12}
+                  maxToRenderPerBatch={12}
+                  windowSize={7}
+                  style={styles.dayList}
+                  contentContainerStyle={styles.dayListContent}
+                  ListFooterComponent={
+                    overflows ? (
+                      <View style={[styles.scrollHint, { borderColor: colors.borderSubtle }]}>
+                        <LucideIcon name="chevrons-down" size={15} color={colors.textMuted} />
+                        <Text style={[typography.caption, { color: colors.textMuted }]}>
+                          Листай список — всего {activity.completions.length}
+                        </Text>
                       </View>
-                      <View style={styles.questCopy}>
-                        <Text numberOfLines={2} style={[typography.bodyStrong, { color: colors.text }]}>{item.title}</Text>
-                        <Text style={[typography.caption, { color: colors.textMuted }]}>{item.time} · {CATEGORY_LABELS[item.category]}</Text>
-                      </View>
-                      <Text style={[typography.numericSmall, { color: colors.accent }]}>+{item.xp}</Text>
-                    </MotionPressable>
-                    {expanded ? (
-                      <MotionPressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Отменить выполнение: ${item.title}`}
-                        disabled={Boolean(undoingId)}
-                        onPress={() => confirmUndo(item)}
+                    ) : null
+                  }
+                  renderItem={({ item }) => {
+                    const categoryColor = colors[`cat${item.category.charAt(0).toUpperCase()}${item.category.slice(1)}` as keyof typeof colors];
+                    const expanded = expandedCompletionId === item.id;
+                    const undoing = undoingId === item.id;
+                    return (
+                      <View
                         style={[
-                          styles.undoButton,
-                          {
-                            backgroundColor: colors.dangerSoft,
-                            borderLeftColor: colors.borderSubtle,
-                            opacity: undoing ? 0.6 : 1,
-                          },
+                          styles.questRow,
+                          { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, borderRadius: radius.md },
                         ]}
                       >
-                        {undoing ? (
-                          <ActivityIndicator size="small" color={colors.danger} />
-                        ) : (
-                          <LucideIcon name="undo-2" size={20} color={colors.danger} />
-                        )}
-                      </MotionPressable>
-                    ) : null}
-                  </View>
-                );
-              }}
-            />
-          )}
-        </View>
-      ) : null}
-    </Overlay>
+                        <MotionPressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`${item.title}, ${item.xp} XP`}
+                          accessibilityHint="Показать отмену выполнения"
+                          accessibilityState={{ expanded }}
+                          disabled={Boolean(undoingId)}
+                          onPress={() => setExpandedCompletionId(current => current === item.id ? null : item.id)}
+                          style={[styles.questMain, { opacity: Boolean(undoingId) ? 0.6 : 1 }]}
+                        >
+                          <View style={[styles.questIcon, { backgroundColor: `${categoryColor}20` }]}>
+                            <LucideIcon name="check" size={17} color={categoryColor} />
+                          </View>
+                          <View style={styles.questCopy}>
+                            <Text numberOfLines={2} style={[typography.bodyStrong, { color: colors.text }]}>{item.title}</Text>
+                            <Text style={[typography.caption, { color: colors.textMuted }]}>{item.time} · {CATEGORY_LABELS[item.category]}</Text>
+                          </View>
+                          <Text style={[typography.numericSmall, { color: colors.accent }]}>+{item.xp}</Text>
+                        </MotionPressable>
+                        {expanded ? (
+                          <MotionPressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Отменить выполнение: ${item.title}`}
+                            disabled={Boolean(undoingId)}
+                            onPress={() => requestUndo(item)}
+                            style={[
+                              styles.undoButton,
+                              {
+                                backgroundColor: colors.dangerSoft,
+                                borderLeftColor: colors.borderSubtle,
+                                opacity: undoing ? 0.6 : 1,
+                              },
+                            ]}
+                          >
+                            {undoing ? (
+                              <ActivityIndicator size="small" color={colors.danger} />
+                            ) : (
+                              <LucideIcon name="undo-2" size={20} color={colors.danger} />
+                            )}
+                          </MotionPressable>
+                        ) : null}
+                      </View>
+                    );
+                  }}
+                />
+              </>
+            )}
+          </View>
+        ) : null}
+      </Overlay>
+
+      <UndoCompletionDialog
+        visible={pendingUndo !== null}
+        title={pendingUndo?.title ?? ''}
+        category={pendingUndo?.category ?? 'health'}
+        xp={pendingUndo?.xp ?? 0}
+        busy={undoingId === pendingUndo?.id}
+        onConfirm={() => void confirmUndo()}
+        onCancel={() => setPendingUndo(null)}
+      />
+    </>
   );
 }
 
@@ -755,9 +782,20 @@ const styles = StyleSheet.create({
   undoError: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
   // flexShrink (not flex:1) is what makes this a real scroll box: the
   // sheet has a pixel maxHeight, the list takes its content height and
-  // shrinks (then scrolls) when the content is taller.
-  dayList: { flexGrow: 0, flexShrink: 1 },
+  // shrinks (then scrolls) when the content is taller. minHeight:0 is
+  // stated explicitly so no future default can reintroduce a
+  // content-sized floor that would push the tail of the list off-screen.
+  dayList: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
   dayListContent: { paddingTop: 12, paddingBottom: 8, gap: 8 },
+  scrollHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 10,
+    marginTop: 2,
+  },
   questRow: { minHeight: 68, borderWidth: 1, flexDirection: 'row', alignItems: 'stretch', overflow: 'hidden' },
   questMain: { flex: 1, minWidth: 0, minHeight: 68, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 },
   undoButton: { width: 50, alignItems: 'center', justifyContent: 'center', borderLeftWidth: 1 },
