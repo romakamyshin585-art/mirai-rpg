@@ -13,14 +13,20 @@ concurrency:
   group: android-apk-build
   cancel-in-progress: true
 
+env:
+  # R8 and resource shrinking are enabled in app.json for the tuned build.
+  # The baseline step turns them off through -P, which overrides the value
+  # prebuild writes into gradle.properties, so a tuning problem can never
+  # leave the project without an installable APK.
+  BASELINE_FLAGS: >-
+    -Pmirai.arm64Only=false
+    -Pandroid.enableProguardInReleaseBuilds=false
+    -Pandroid.enableShrinkResourcesInReleaseBuilds=false
+
 jobs:
-  # The deliverable: a per-ABI arm64-v8a release APK for the target phone
-  # (Xiaomi Mi 10, Snapdragon 865). Roughly half the size of a universal
-  # build, which is a faster install and a faster cold start. The split is
-  # injected by plugins/withAndroidBuildTuning.js, not by this file.
-  build-arm64:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 55
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,31 +49,85 @@ jobs:
       - name: Generate Android project
         run: npx expo prebuild --platform android --clean --non-interactive
 
-      - name: Build release APK
+      # Step 1 is deliberately the conservative configuration: universal
+      # ABI set, no R8, no resource shrinking. Everything it uses is stock
+      # Expo, so it is the variant that must always produce an APK.
+      - name: Build baseline release APK
         run: |
+          set -o pipefail
           cd android
           ./gradlew :app:assembleRelease --no-daemon \
-            -Pmirai.arm64Only=true \
-            -PreactNativeArchitectures=arm64-v8a
+            -Pmirai.arm64Only=false \
+            -Pandroid.enableProguardInReleaseBuilds=false \
+            -Pandroid.enableShrinkResourcesInReleaseBuilds=false \
+            -PreactNativeArchitectures=arm64-v8a,armeabi-v7a 2>&1 | tee ../gradle-baseline.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -nE "FAILURE:|What went wrong|^e: |error:|Execution failed for task|> Task .* FAILED|Caused by:" ../gradle-baseline.log | head -40 | while IFS= read -r line; do
+              echo "::error::baseline ${line}"
+            done
+          fi
+          exit "$status"
 
-      - name: Upload APK
+      - name: Upload baseline APK
         uses: actions/upload-artifact@v4
         with:
-          name: mirai-rpg-apk-arm64
+          name: mirai-rpg-apk-universal
           path: android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-      - name: Report APK size
+      # Step 2 applies the device tuning from mirai-rpg-mi10-optimization.md:
+      # R8, resource shrinking and an arm64-v8a-only split. It is allowed to
+      # fail so a regression in the tuning cannot block the release, and its
+      # failure reason is echoed as annotations because a gradle failure is
+      # otherwise invisible through the API without repo admin rights.
+      - name: Build tuned arm64 APK
+        continue-on-error: true
         run: |
-          cd android/app/build/outputs/apk/release
+          set -o pipefail
+          cd android
+          ./gradlew :app:assembleRelease --no-daemon \
+            -Pmirai.arm64Only=true \
+            -PreactNativeArchitectures=arm64-v8a 2>&1 | tee ../gradle-arm64.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -nE "FAILURE:|What went wrong|^e: |error:|Execution failed for task|> Task .* FAILED|Caused by:" ../gradle-arm64.log | head -40 | while IFS= read -r line; do
+              echo "::error::tuned ${line}"
+            done
+          fi
+          exit "$status"
+
+      - name: Upload tuned arm64 APK
+        if: success()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirai-rpg-apk-arm64
+          path: android/app/build/outputs/apk/release/*arm64*.apk
+          if-no-files-found: warn
+
+      - name: Upload gradle logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-logs
+          path: |
+            gradle-baseline.log
+            gradle-arm64.log
+          if-no-files-found: warn
+
+      - name: Report APK sizes
+        if: always()
+        run: |
+          cd android/app/build/outputs/apk/release 2>/dev/null || exit 0
           for f in *.apk; do
             echo "$(du -h "$f" | cut -f1)  $f"
           done
 
-  # x86_64 build for the emulator smoke test. Separate job so it runs in
-  # parallel instead of doubling the wall clock of the release build.
-  # continue-on-error throughout: the emulator is a useful smoke signal, not
-  # a gate, and it has never been a substitute for the real device.
+  # x86_64 build for the emulator smoke test, in parallel so it does not
+  # extend the wall clock. continue-on-error throughout: the emulator is a
+  # smoke signal, not a gate, and it has never been a substitute for the
+  # real device.
   smoke-x86:
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -96,10 +156,20 @@ jobs:
 
       - name: Build x86_64 release APK
         run: |
+          set -o pipefail
           cd android
           ./gradlew :app:assembleRelease --no-daemon \
             -Pmirai.arm64Only=false \
-            -PreactNativeArchitectures=x86_64
+            -Pandroid.enableProguardInReleaseBuilds=false \
+            -Pandroid.enableShrinkResourcesInReleaseBuilds=false \
+            -PreactNativeArchitectures=x86_64 2>&1 | tee ../gradle-x86.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -nE "FAILURE:|What went wrong|^e: |error:|Execution failed for task|> Task .* FAILED|Caused by:" ../gradle-x86.log | head -40 | while IFS= read -r line; do
+              echo "::error::x86 ${line}"
+            done
+          fi
+          exit "$status"
 
       - name: Run Android emulator smoke test
         continue-on-error: true
@@ -138,4 +208,5 @@ jobs:
             emulator-logcat.txt
             emulator-boot.png
             emulator-after-tap.png
+            gradle-x86.log
           if-no-files-found: warn
