@@ -66,13 +66,10 @@ jobs:
             -Pandroid.enableShrinkResourcesInReleaseBuilds=false \
             -PreactNativeArchitectures=arm64-v8a,armeabi-v7a 2>&1 | tee ../gradle-baseline.log || status=$?
           if [ "$status" -ne 0 ]; then
-            {
-              echo "::group::gradle output (last 60 lines)"
-              tail -n 60 ../gradle-baseline.log
-              echo "::endgroup::"
-            } | while IFS= read -r line; do
-              echo "::error::baseline: ${line}"
-            done
+            # One annotation, not one per line: the check-run API caps
+            # annotations at 10, so a per-line loop silently loses the
+            # reason. %0A keeps the newlines readable in the UI.
+            echo "::error title=gradle::$(grep -v '^[[:space:]]*$' ../gradle-baseline.log | tail -n 25 | sed -e 's/%/%25/g' -e 's/\r//' | awk '{printf "%s%%0A", $0}')"
           fi
           exit "$status"
 
@@ -98,9 +95,7 @@ jobs:
             -Pmirai.arm64Only=true \
             -PreactNativeArchitectures=arm64-v8a 2>&1 | tee ../gradle-arm64.log || status=$?
           if [ "$status" -ne 0 ]; then
-            tail -n 60 ../gradle-arm64.log | while IFS= read -r line; do
-              echo "::error::tuned: ${line}"
-            done
+            echo "::error title=gradle arm64::$(grep -v '^[[:space:]]*$' ../gradle-arm64.log | tail -n 25 | sed -e 's/%/%25/g' -e 's/\r//' | awk '{printf "%s%%0A", $0}')"
           fi
           exit "$status"
 
@@ -172,9 +167,7 @@ jobs:
             -Pandroid.enableShrinkResourcesInReleaseBuilds=false \
             -PreactNativeArchitectures=x86_64 2>&1 | tee ../gradle-x86.log || status=$?
           if [ "$status" -ne 0 ]; then
-            tail -n 60 ../gradle-x86.log | while IFS= read -r line; do
-              echo "::error::x86: ${line}"
-            done
+            echo "::error title=gradle x86::$(grep -v '^[[:space:]]*$' ../gradle-x86.log | tail -n 25 | sed -e 's/%/%25/g' -e 's/\r//' | awk '{printf "%s%%0A", $0}')"
           fi
           exit "$status"
 
