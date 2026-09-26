@@ -38,13 +38,18 @@ function arm64Split() {
             enable (project.findProperty('mirai.arm64Only')?.toBoolean() ?: true)
             reset()
             include 'arm64-v8a'
-            // AGP 8 models this as a Property<Boolean>, not a setter method:
-            // \`universal(false)\` fails configuration with
-            // "Could not find method universal() ... on AbiSplitOptions".
-            universal = (project.findProperty('mirai.arm64Universal')?.toBoolean() ?: false)
         }
     }
 `;
+/**
+ * `universalApk` is deliberately left at its AGP default (true), so the
+ * build emits both `app-arm64-v8a-release.apk` and
+ * `app-universal-release.apk`. Setting it explicitly needs the exact
+ * accessor name for the AGP version in use - `universal(false)` and
+ * `universal = false` both fail configuration on AGP 8 with "Could not
+ * find method/set unknown property 'universal'" - and an extra universal
+ * APK costs one packaging pass, which is cheaper than a broken build.
+ */
 }
 
 function withArm64Split(config) {
