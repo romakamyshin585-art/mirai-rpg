@@ -38,7 +38,10 @@ function arm64Split() {
             enable (project.findProperty('mirai.arm64Only')?.toBoolean() ?: true)
             reset()
             include 'arm64-v8a'
-            universal (project.findProperty('mirai.arm64Universal')?.toBoolean() ?: false)
+            // AGP 8 models this as a Property<Boolean>, not a setter method:
+            // \`universal(false)\` fails configuration with
+            // "Could not find method universal() ... on AbiSplitOptions".
+            universal = (project.findProperty('mirai.arm64Universal')?.toBoolean() ?: false)
         }
     }
 `;
