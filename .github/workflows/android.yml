@@ -53,15 +53,18 @@ jobs:
       # ABI set, no R8, no resource shrinking. Everything it uses is stock
       # Expo, so it is the variant that must always produce an APK.
       - name: Build baseline release APK
+        shell: bash
         run: |
-          set -o pipefail
+          # `bash -e` aborts on the first failing command, so the pipeline is
+          # captured with `|| status=$?` - otherwise the diagnostics below
+          # never run and the reason is invisible.
+          status=0
           cd android
           ./gradlew :app:assembleRelease --no-daemon \
             -Pmirai.arm64Only=false \
             -Pandroid.enableProguardInReleaseBuilds=false \
             -Pandroid.enableShrinkResourcesInReleaseBuilds=false \
-            -PreactNativeArchitectures=arm64-v8a,armeabi-v7a 2>&1 | tee ../gradle-baseline.log
-          status=${PIPESTATUS[0]}
+            -PreactNativeArchitectures=arm64-v8a,armeabi-v7a 2>&1 | tee ../gradle-baseline.log || status=$?
           if [ "$status" -ne 0 ]; then
             {
               echo "::group::gradle output (last 60 lines)"
@@ -87,13 +90,13 @@ jobs:
       # otherwise invisible through the API without repo admin rights.
       - name: Build tuned arm64 APK
         continue-on-error: true
+        shell: bash
         run: |
-          set -o pipefail
+          status=0
           cd android
           ./gradlew :app:assembleRelease --no-daemon \
             -Pmirai.arm64Only=true \
-            -PreactNativeArchitectures=arm64-v8a 2>&1 | tee ../gradle-arm64.log
-          status=${PIPESTATUS[0]}
+            -PreactNativeArchitectures=arm64-v8a 2>&1 | tee ../gradle-arm64.log || status=$?
           if [ "$status" -ne 0 ]; then
             tail -n 60 ../gradle-arm64.log | while IFS= read -r line; do
               echo "::error::tuned: ${line}"
@@ -159,15 +162,15 @@ jobs:
         run: npx expo prebuild --platform android --clean --non-interactive
 
       - name: Build x86_64 release APK
+        shell: bash
         run: |
-          set -o pipefail
+          status=0
           cd android
           ./gradlew :app:assembleRelease --no-daemon \
             -Pmirai.arm64Only=false \
             -Pandroid.enableProguardInReleaseBuilds=false \
             -Pandroid.enableShrinkResourcesInReleaseBuilds=false \
-            -PreactNativeArchitectures=x86_64 2>&1 | tee ../gradle-x86.log
-          status=${PIPESTATUS[0]}
+            -PreactNativeArchitectures=x86_64 2>&1 | tee ../gradle-x86.log || status=$?
           if [ "$status" -ne 0 ]; then
             tail -n 60 ../gradle-x86.log | while IFS= read -r line; do
               echo "::error::x86: ${line}"
