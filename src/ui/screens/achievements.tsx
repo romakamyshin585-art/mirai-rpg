@@ -55,7 +55,7 @@ type AchievementsScreenProps = {
   onDataChanged?: () => void;
 };
 
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.3.1';
 
 export function AchievementsScreen({ ctx, revision, celebrationCodes, onDataChanged }: AchievementsScreenProps) {
   const { colors, typographyStylesheet: typography } = useTheme();

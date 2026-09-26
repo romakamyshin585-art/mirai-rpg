@@ -283,6 +283,30 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
     }, 170);
   };
 
+  /**
+   * Per-axis detail for the radar's tap target. All-time numbers come from
+   * the stat rows the screen already loaded; the 7-day delta comes from the
+   * same completions window the weekly report uses.
+   *
+   * Declared above the loading/error early returns on purpose. A hook below
+   * a conditional `return` registers on some renders and not on others, and
+   * React reports that as "Rendered more hooks than during the previous
+   * render" the moment the screen stops showing its loading state - which
+   * is exactly the first frame after a fresh start.
+   */
+  const axisInsights = useMemo<Record<Category, AxisInsight>>(() => {
+    const result = {} as Record<Category, AxisInsight>;
+    for (const category of CATEGORIES) {
+      const stat = stats.find(item => item.category === category);
+      result[category] = {
+        xp: stat?.xp_total_in_category ?? 0,
+        questsCompleted: stat?.value ?? 0,
+        weeklyXp: weeklyXpByCategory[category] ?? 0,
+      };
+    }
+    return result;
+  }, [stats, weeklyXpByCategory]);
+
   if (loading) {
     return (
       <View style={[styles.center, { backgroundColor: colors.bg }]}>
@@ -326,21 +350,6 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
   });
   const achievementProgress = totalAchievements > 0 ? Math.round((unlocked / totalAchievements) * 100) : 0;
   const achievementsHint = totalAchievements > 0 ? `${achievementProgress}% открыто` : 'Нет наград';
-  // Per-axis detail for the radar's tap target. All-time numbers come
-  // from the stat rows the screen already loaded; the 7-day delta comes
-  // from the same completions window the weekly report uses.
-  const axisInsights = useMemo<Record<Category, AxisInsight>>(() => {
-    const result = {} as Record<Category, AxisInsight>;
-    for (const category of CATEGORIES) {
-      const stat = stats.find(item => item.category === category);
-      result[category] = {
-        xp: stat?.xp_total_in_category ?? 0,
-        questsCompleted: stat?.value ?? 0,
-        weeklyXp: weeklyXpByCategory[category] ?? 0,
-      };
-    }
-    return result;
-  }, [stats, weeklyXpByCategory]);
 
   return (
     <>

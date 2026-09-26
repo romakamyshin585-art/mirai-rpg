@@ -1,4 +1,5 @@
-import { RULES, consecutiveStreakEndingOn, distinctCategoriesOnDay, dayKey, AchievementContext } from '../src/domain/achievements';
+import { RULES, consecutiveStreakEndingOn, distinctCategoriesOnDay, AchievementContext } from '../src/domain/achievements';
+import { dayKey } from '../src/domain/time';
 import { CATEGORIES, Category } from '../src/domain/category';
 
 const today = new Date('2026-08-28T15:00:00');

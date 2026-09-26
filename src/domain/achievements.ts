@@ -1,5 +1,4 @@
 import { timeBucket, isWeekend, dayKey, daysBetween } from './time';
-import type { TimeBucket } from './time';
 import type { Category } from './category';
 
 export interface AchievementContext {
@@ -199,5 +198,9 @@ export const RULES: readonly AchievementRule[] = [
 ];
 
 export { consecutiveStreakEndingOn, distinctCategoriesOnDay, distinctCategoriesInLastNDays, completedOnDay };
-export { timeBucket, isWeekend, dayKey, daysBetween };
-export type { TimeBucket };
+// The time helpers are deliberately NOT re-exported from here. `domain/index`
+// does `export * from './time'` and `export * from './achievements'`, and a
+// name reachable through two star exports is ambiguous: ES modules then
+// exclude it from the barrel entirely, so `import { dayKey } from './domain'`
+// would be `undefined` at runtime while TypeScript stayed silent. Callers
+// import from './time' directly.

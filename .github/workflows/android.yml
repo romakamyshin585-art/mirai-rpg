@@ -13,17 +13,41 @@ concurrency:
   group: android-apk-build
   cancel-in-progress: true
 
-env:
-  # R8 and resource shrinking are enabled in app.json for the tuned build.
-  # The baseline step turns them off through -P, which overrides the value
-  # prebuild writes into gradle.properties, so a tuning problem can never
-  # leave the project without an installable APK.
-  BASELINE_FLAGS: >-
-    -Pmirai.arm64Only=false
-    -Pandroid.enableProguardInReleaseBuilds=false
-    -Pandroid.enableShrinkResourcesInReleaseBuilds=false
-
 jobs:
+  # Fast gate, runs in parallel with the APK builds. Types and unit tests
+  # cannot see a hook registered after a conditional return, so
+  # rules-of-hooks is the rule that matters here: its only symptom is
+  # "Rendered more hooks than during the previous render" on the first
+  # frame after a cold start, on the user's device, in a release build.
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npx jest --ci --silent
+
+      - name: Lint
+        run: npx expo lint
+
+  # The deliverable: a per-ABI arm64-v8a release APK for the target phone
+  # (Xiaomi Mi 10, Snapdragon 865). Roughly half the size of a universal
+  # build, which is a faster install and a faster cold start. The split is
+  # injected by plugins/withAndroidBuildTuning.js, not by this file.
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 55
@@ -51,7 +75,10 @@ jobs:
 
       # Step 1 is deliberately the conservative configuration: universal
       # ABI set, no R8, no resource shrinking. Everything it uses is stock
-      # Expo, so it is the variant that must always produce an APK.
+      # Expo, so it is the variant that must always produce an APK. R8 and
+      # shrinking are on in app.json; -P overrides the value prebuild writes
+      # into gradle.properties, so a tuning problem can never leave the
+      # project without an installable APK.
       - name: Build baseline release APK
         shell: bash
         run: |

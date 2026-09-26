@@ -5,7 +5,7 @@
 import type { DbExecutor } from '../db/executor';
 import { QuestRepo, CompletionRepo } from '../repos/quest_repo';
 import type { Category } from '../domain/category';
-import { dayKey } from '../domain/achievements';
+import { dayKey } from '../domain/time';
 
 export interface RecentActivityItem {
   id: string;
