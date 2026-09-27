@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
@@ -14,6 +14,8 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { MotionPressable } from '../components/MotionPressable';
 import { HAPTIC_EVENTS, duration, scale, spring, useHaptics, useReducedMotion } from '../motion';
 import { MotionProgressBar } from '../components/MotionProgressBar';
+import { QuestSearchField } from '../components/QuestSearchField';
+import { searchQuests } from '../../domain/quest_search';
 
 const CATEGORY_ICONS: Record<Category, string> = {
   health: 'heart-pulse',
@@ -68,6 +70,14 @@ export function QuestsScreen({
   const reduced = useReducedMotion();
   const [activeFilter, setActiveFilter] = useState<Category | 'all'>('all');
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  /**
+   * `useDeferredValue` rather than a debounce: the filter is pure and runs
+   * over a few hundred in-memory rows, so the point is only to let React
+   * keep the TextInput responsive while the list re-renders. It also means
+   * typing never drops a character, which a debounce can.
+   */
+  const deferredQuery = useDeferredValue(query);
   const [quests, setQuests] = useState<QuestRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -167,11 +177,23 @@ export function QuestsScreen({
     return () => clearTimeout(timer);
   }, [onTargetConsumed, quests, targetQuest, trigger]);
 
+  /**
+   * The visible list: the category filter first (it narrows the corpus in
+   * the database), then the text query on what is left. Searched last so
+   * the ranker never sees rows the user has already excluded.
+   */
+  const visible = useMemo(
+    () => searchQuests(quests, deferredQuery).map(result => result.quest),
+    [deferredQuery, quests],
+  );
+
   const summary = useMemo(() => {
-    const totalXp = quests.reduce((sum, quest) => sum + quest.xp_reward, 0);
-    const custom = quests.filter(quest => quest.is_system === 0).length;
+    const totalXp = visible.reduce((sum, quest) => sum + quest.xp_reward, 0);
+    const custom = visible.filter(quest => quest.is_system === 0).length;
     return { totalXp, custom };
-  }, [quests]);
+  }, [visible]);
+
+  const searching = deferredQuery.trim().length > 0;
 
   const operationLocked = busy !== null || undoing;
 
@@ -352,6 +374,11 @@ export function QuestsScreen({
             <Text style={[styles.countLabel, typography.caption, { color: colors.textMuted }]}>активных</Text>
           </View>
         </View>
+        <QuestSearchField
+          value={query}
+          onChange={setQuery}
+          resultCount={query.trim() ? visible.length : null}
+        />
         <FilterRow value={activeFilter} onChange={setActiveFilter} />
       </View>
 
@@ -375,7 +402,7 @@ export function QuestsScreen({
         </View>
       ) : (
         <FlatList
-          data={quests}
+          data={visible}
           keyExtractor={item => item.id}
           renderItem={renderQuest}
           initialNumToRender={10}
@@ -414,20 +441,42 @@ export function QuestsScreen({
             ) : null
           }
           ListEmptyComponent={
-            <View style={styles.empty}>
-              <View style={[styles.emptyIcon, { backgroundColor: colors.surfaceElevated }]}>
-                <LucideIcon name="list-checks" size={34} color={colors.accent} />
+            searching ? (
+              <View style={styles.empty}>
+                <View style={[styles.emptyIcon, { backgroundColor: colors.surfaceElevated }]}>
+                  <LucideIcon name="search-x" size={32} color={colors.textMuted} />
+                </View>
+                <Text style={[styles.stateTitle, { color: colors.text }]}>Ничего не нашлось</Text>
+                <Text style={[styles.stateText, { color: colors.textMuted }]}>
+                  {`По запросу «${query.trim()}» нет квестов. Попробуй другое слово или сбрось поиск.`}
+                </Text>
+                <MotionPressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setQuery('');
+                    setActiveFilter('all');
+                  }}
+                  style={[styles.retry, { backgroundColor: colors.accent }]}
+                >
+                  <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Сбросить поиск</Text>
+                </MotionPressable>
               </View>
-              <Text style={[styles.stateTitle, { color: colors.text }]}>В этой категории пока пусто</Text>
-              <Text style={[styles.stateText, { color: colors.textMuted }]}>Добавь свой квест или выбери другую категорию</Text>
-              <MotionPressable
-                accessibilityRole="button"
-                onPress={() => setShowCreate(true)}
-                style={[styles.retry, { backgroundColor: colors.accent }]}
-              >
-                <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Добавить квест</Text>
-              </MotionPressable>
-            </View>
+            ) : (
+              <View style={styles.empty}>
+                <View style={[styles.emptyIcon, { backgroundColor: colors.surfaceElevated }]}>
+                  <LucideIcon name="list-checks" size={34} color={colors.accent} />
+                </View>
+                <Text style={[styles.stateTitle, { color: colors.text }]}>В этой категории пока пусто</Text>
+                <Text style={[styles.stateText, { color: colors.textMuted }]}>Добавь свой квест или выбери другую категорию</Text>
+                <MotionPressable
+                  accessibilityRole="button"
+                  onPress={() => setShowCreate(true)}
+                  style={[styles.retry, { backgroundColor: colors.accent }]}
+                >
+                  <Text style={[styles.retryLabel, { color: colors.textInverse }]}>Добавить квест</Text>
+                </MotionPressable>
+              </View>
+            )
           }
         />
       )}

@@ -14,7 +14,7 @@ describe('seed', () => {
   test('first boot: inserts the full quest catalogue + 17 achievements', async () => {
     const db = await freshMemoryDb();
     const result = await seedIfEmpty(db);
-    expect(result.achievementsInserted).toBe(17);
+    expect(result.achievementsInserted).toBe(33);
     expect(result.questsInserted).toBe(TOTAL);
   });
 
@@ -120,9 +120,9 @@ describe('seed', () => {
     await seedIfEmpty(db);
     const a = new AchievementRepo(db);
     const cat = await a.listCatalog();
-    expect(cat.length).toBe(17);
+    expect(cat.length).toBe(33);
     const codes = new Set(cat.map((c) => c.code));
-    expect(codes.size).toBe(17);
+    expect(codes.size).toBe(33);
   });
 
   test('seed on DB with pre-existing achievements: no error, idempotent', async () => {
@@ -134,7 +134,7 @@ describe('seed', () => {
     const result = await seedIfEmpty(db);
     expect(result.achievementsInserted).toBe(0);
     const cat = await aRepo.listCatalog();
-    expect(cat.length).toBe(17);
+    expect(cat.length).toBe(33);
   });
 
   test('catalog codes and rule codes match one to one', async () => {
@@ -145,7 +145,7 @@ describe('seed', () => {
     const seedCodes = ACHIEVEMENT_SEED.map((def) => def.code).sort();
     expect(catalog.map((def) => def.code).sort()).toEqual(seedCodes);
     expect(seedCodes).toEqual(ruleCodes);
-    expect(new Set(catalog.map((def) => def.code)).size).toBe(17);
+    expect(new Set(catalog.map((def) => def.code)).size).toBe(33);
   });
 
   test('partial catalog receives missing achievement definitions', async () => {
@@ -153,8 +153,8 @@ describe('seed', () => {
     const aRepo = new AchievementRepo(db);
     await aRepo.insertDef(ACHIEVEMENT_SEED[0]!);
     const result = await seedIfEmpty(db);
-    expect(result.achievementsInserted).toBe(16);
-    expect((await aRepo.listCatalog()).length).toBe(17);
+    expect(result.achievementsInserted).toBe(32);
+    expect((await aRepo.listCatalog()).length).toBe(33);
   });
 
   test('archived system quest is not reactivated or duplicated', async () => {

@@ -111,7 +111,7 @@ describe('AppContext seed idempotency with pre-existing achievements', () => {
     const result = await seedIfEmpty(db);
     expect(result.achievementsInserted).toBe(0);
     const cat = await aRepo.listCatalog();
-    expect(cat.length).toBe(17);
+    expect(cat.length).toBe(33);
   });
 
   test('seedIfEmpty is idempotent across multiple calls', async () => {
@@ -119,7 +119,7 @@ describe('AppContext seed idempotency with pre-existing achievements', () => {
     const result1 = await seedIfEmpty(db); // First call - should insert
     const result2 = await seedIfEmpty(db); // Second call - should be idempotent
     
-    expect(result1.achievementsInserted).toBe(17);
+    expect(result1.achievementsInserted).toBe(33);
     expect(result1.questsInserted).toBe(226); // 76 wave-1 + 150 wave-2
     expect(result2.achievementsInserted).toBe(0);
     expect(result2.questsInserted).toBe(0);

@@ -2,7 +2,7 @@ import type { AchievementDefRow } from '../repos/achievement_repo';
 
 export const ACHIEVEMENT_SEED: Omit<AchievementDefRow, 'id' | 'created_at'>[] = [
   { code: 'first_step',        name: 'Первый шаг',          description: 'Выполни первый квест',              rarity: 'common',    icon: '🚶' },
-  { code: 'first_quest',       name: 'Старт',                description: 'Соверши любое действие',             rarity: 'common',    icon: '🌱' },
+  { code: 'first_quest',       name: 'Тройка',              description: '3 разных квеста выполнено',          rarity: 'common',    icon: '🌱' },
   { code: 'comeback',          name: 'Возвращение',          description: 'Вернись после паузы в 3+ дней',     rarity: 'common',    icon: '🔁' },
   { code: 'early_bird',        name: 'Ранняя пташка',        description: 'Квест до 09:00',                     rarity: 'common',    icon: '🌅' },
   { code: 'midnight_owl',      name: 'Полуночник',           description: 'Квест между 00:00 и 05:00',          rarity: 'common',    icon: '🌙' },
@@ -18,4 +18,23 @@ export const ACHIEVEMENT_SEED: Omit<AchievementDefRow, 'id' | 'created_at'>[] = 
   { code: 'hardcore_5',        name: 'Хардкор',              description: '5 квестов сложности 3',              rarity: 'rare',      icon: '💀' },
   { code: 'personal_record_day', name: 'Рекорд дня',          description: 'Твой лучший день по XP',             rarity: 'epic',      icon: '🏆' },
   { code: 'category_personal_best', name: 'Рекорд категории', description: 'Твой лучший XP в категории',        rarity: 'epic',      icon: '🥇' },
+  // --- second wave -------------------------------------------------------
+  // Order mirrors RULES, so a code present in one list and missing from the
+  // other is obvious at a glance.
+  { code: 'triple_day',         name: 'Тройной залп',        description: '3 квеста за один день',               rarity: 'common',    icon: '🎯' },
+  { code: 'career_10',          name: 'Карьерный рост',      description: '10 квестов в сфере карьеры',           rarity: 'common',    icon: '📈' },
+  { code: 'knowledge_10',       name: 'Книжный червь',       description: '10 квестов в сфере знаний',            rarity: 'common',    icon: '📚' },
+  { code: 'discipline_10',      name: 'Железная воля',       description: '10 квестов в сфере дисциплины',        rarity: 'common',    icon: '🧱' },
+  { code: 'social_10',          name: 'Тёплый круг',         description: '10 квестов в сфере общения',           rarity: 'common',    icon: '🤝' },
+  { code: 'xp_500',             name: 'Полтысячи',           description: '500 XP суммарно',                       rarity: 'rare',      icon: '💰' },
+  { code: 'five_day',           name: 'Полный день',         description: '5 квестов за один день',               rarity: 'rare',      icon: '🔥' },
+  { code: 'ten_active_days',    name: 'Десять дней',         description: '10 дней с активностью',                rarity: 'rare',      icon: '📆' },
+  { code: 'health_25',          name: 'Железный',            description: '25 квестов здоровья',                  rarity: 'rare',      icon: '💪' },
+  { code: 'early_bird_5',       name: 'Пять рассветов',      description: '5 квестов до 09:00',                   rarity: 'rare',      icon: '🌅' },
+  { code: 'hardcore_20',        name: 'Свояк',               description: '20 сложных квестов (3/3)',             rarity: 'epic',      icon: '🗡️' },
+  { code: 'twenty_active_days', name: 'Двадцать дней',       description: '20 дней с активностью',                rarity: 'epic',      icon: '🗓️' },
+  { code: 'xp_2000',            name: 'Две тысячи',          description: '2000 XP суммарно',                      rarity: 'epic',      icon: '💎' },
+  { code: 'variety_100',        name: 'Сотня',               description: '100 разных квестов',                   rarity: 'epic',      icon: '🎠' },
+  { code: 'variety_150',        name: 'Полторы сотни',       description: '150 разных квестов',                   rarity: 'legendary', icon: '🌟' },
+  { code: 'xp_5000',            name: 'Пять тысяч',          description: '5000 XP суммарно',                      rarity: 'legendary', icon: '👑' },
 ];

@@ -134,7 +134,7 @@ describe('database persistence across reopen', () => {
     
     const aRepo1 = new AchievementRepo(db1);
     const cat1 = await aRepo1.listCatalog();
-    expect(cat1.length).toBe(17);
+    expect(cat1.length).toBe(33);
     
     // In production SQLite, this would persist
     // In memory DB, new instance starts empty

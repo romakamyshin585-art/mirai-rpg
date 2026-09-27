@@ -18,6 +18,7 @@
 
 import { useColorScheme } from 'react-native';
 import { createContext, useContext, useMemo } from 'react';
+import { CATEGORY_LABELS } from '../domain/category';
 import { duration, spring } from './motion/tokens';
 
 // ============================================================
@@ -349,13 +350,9 @@ export const RARITY_COLORS: Record<string, string> = {
 };
 
 // Legacy CATEGORY_LABELS
-export const CATEGORY_LABELS = {
-  health: 'Здоровье',
-  knowledge: 'Знания',
-  career: 'Карьера',
-  discipline: 'Дисциплина',
-  social: 'Общение',
-} as const;
+// Canonical home is src/domain/category.ts, which keeps the labels usable
+// from pure domain code (search, ranking) without pulling in React Native.
+export { CATEGORY_LABELS };
 
 // ============================================================
 // NEW API EXPORTS (for new code) - re-export internal constants

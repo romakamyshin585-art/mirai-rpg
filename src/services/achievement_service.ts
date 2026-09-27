@@ -5,6 +5,7 @@ import { RULES, weekendDayKeys, type AchievementContext } from '../domain/achiev
 import {
   AchievementRepo,
   PersonalBestRepo,
+  type AchievementDefRow,
   type PersonalBestSeed,
 } from '../repos/achievement_repo';
 import { CompletionRepo, QuestRepo, type CompletionRow } from '../repos/quest_repo';
@@ -115,7 +116,7 @@ export class AchievementService {
     ctx.personalBest = { day: newDayRecord, category: newCategoryRecord };
 
     const passed = RULES.filter((rule) => rule.test(ctx)).map((rule) => rule.code);
-    return this.unlockCodes(userId, passed);
+    return this.unlockCodes(userId, passed, { onePerEvent: true });
   }
 
   async syncFromHistory(userId: string): Promise<NewlyUnlocked[]> {
@@ -366,13 +367,46 @@ export class AchievementService {
     return { ctx, prefix };
   }
 
-  private async unlockCodes(userId: string, codes: Iterable<string>): Promise<NewlyUnlocked[]> {
+  /**
+   * Unlock a set of codes, but grant **at most one** per triggering event.
+   *
+   * Reason: several rules are satisfied by the same completion - a level
+   * up, a new personal best, a streak and a category milestone all fire on
+   * the quest that crosses every one of those thresholds. Unlocking four
+   * achievements from one tap made the reward meaningless and buried the
+   * actual milestone, and the celebration overlay had to choose one of them
+   * anyway.
+   *
+   * The winner is the most specific one: the codes keep `RULES` order,
+   * which is authored rarest-first, so a legendary milestone always beats a
+   * common one. `syncFromHistory` is the exception - it is a repair path,
+   * not a reward, and it must be able to back-fill everything that is
+   * genuinely earned.
+   */
+  private async unlockCodes(
+    userId: string,
+    codes: Iterable<string>,
+    options: { onePerEvent?: boolean } = {},
+  ): Promise<NewlyUnlocked[]> {
     const catalog = await this.aRepo.listCatalog();
     const byCode = new Map(catalog.map((def) => [def.code, def]));
-    const unlocked: NewlyUnlocked[] = [];
+    const unlockedIds = new Set((await this.aRepo.listUnlocks(userId)).map((row) => row.achievement_id));
+
+    // Already-held rules are removed *before* choosing a winner. Several
+    // rules stay true forever once satisfied (`first_step`, `week_streak`,
+    // every total-based milestone), so slicing the raw list first would
+    // always pick a rule that cannot be granted and hand out nothing at
+    // all. What is left is "passed and not yet held", in rule order.
+    const candidates: AchievementDefRow[] = [];
     for (const code of new Set(codes)) {
       const def = byCode.get(code);
-      if (!def) continue;
+      if (!def || unlockedIds.has(def.id)) continue;
+      candidates.push(def);
+    }
+
+    const chosen = options.onePerEvent ? candidates.slice(0, 1) : candidates;
+    const unlocked: NewlyUnlocked[] = [];
+    for (const def of chosen) {
       if (await this.aRepo.tryUnlock(userId, def.id)) {
         unlocked.push({ code: def.code, name: def.name, rarity: def.rarity });
       }

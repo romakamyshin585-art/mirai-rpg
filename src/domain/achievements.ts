@@ -1,4 +1,4 @@
-import { timeBucket, isWeekend, dayKey, daysBetween } from './time';
+import { timeBucket, isWeekend, dayKey, daysBetween, type TimeBucket } from './time';
 import type { Category } from './category';
 
 export interface AchievementContext {
@@ -113,6 +113,36 @@ export interface AchievementRule {
   test: (ctx: AchievementContext) => boolean;
 }
 
+function completedOnDayCount(ctx: AchievementContext, day: string): number {
+  return ctx.recentCompletions.filter((entry) => dayKey(entry.at) === day).length;
+}
+
+function bucketCount(ctx: AchievementContext, bucket: TimeBucket): number {
+  return ctx.recentCompletions.filter((entry) => timeBucket(entry.at) === bucket).length;
+}
+
+function hardCount(ctx: AchievementContext): number {
+  return ctx.recentCompletions.filter((entry) => entry.difficulty >= 3).length;
+}
+
+/**
+ * Rule order is priority order.
+ *
+ * `checkAfterCompletion` grants at most one achievement per event, taking
+ * the first rule that passes *and is still locked*. So the ordering has to
+ * read rarest-last within a family, otherwise an achievement that is
+ * permanently true from the start would win every event and a later,
+ * genuinely-earned one would become unreachable.
+ *
+ * Two consequences worth stating:
+ *  - `first_step` and `first_quest` used to both fire on the very first
+ *    completion, which made one of them permanently unreachable.
+ *    `first_quest` is now the third *distinct* quest, so quest 1 grants
+ *    `first_step` and quest 3 grants `first_quest`;
+ *  - the two personal-best rules are last. They fire often by design - any
+ *    new day record is a reward - and if they sat in the middle they would
+ *    shadow every milestone after them.
+ */
 export const RULES: readonly AchievementRule[] = [
   {
     code: 'first_step',
@@ -120,7 +150,7 @@ export const RULES: readonly AchievementRule[] = [
   },
   {
     code: 'first_quest',
-    test: (ctx) => distinctQuestCount(ctx) >= 1,
+    test: (ctx) => distinctQuestCount(ctx) >= 3,
   },
   {
     code: 'comeback',
@@ -185,8 +215,78 @@ export const RULES: readonly AchievementRule[] = [
   },
   {
     code: 'hardcore_5',
-    test: (ctx) => ctx.recentCompletions.filter((r) => r.difficulty >= 3).length >= 5,
+    test: (ctx) => hardCount(ctx) >= 5,
   },
+
+  // --- second wave -------------------------------------------------------
+  // Volume and per-axis milestones. Ordered so that the first one a given
+  // profile can reach always sits ahead of the next.
+  {
+    code: 'triple_day',
+    test: (ctx) => completedOnDayCount(ctx, ctx.today) >= 3,
+  },
+  {
+    code: 'career_10',
+    test: (ctx) => (ctx.perCategoryCount.career ?? 0) >= 10,
+  },
+  {
+    code: 'knowledge_10',
+    test: (ctx) => (ctx.perCategoryCount.knowledge ?? 0) >= 10,
+  },
+  {
+    code: 'discipline_10',
+    test: (ctx) => (ctx.perCategoryCount.discipline ?? 0) >= 10,
+  },
+  {
+    code: 'social_10',
+    test: (ctx) => (ctx.perCategoryCount.social ?? 0) >= 10,
+  },
+  {
+    code: 'xp_500',
+    test: (ctx) => ctx.totalXp >= 500,
+  },
+  {
+    code: 'five_day',
+    test: (ctx) => completedOnDayCount(ctx, ctx.today) >= 5,
+  },
+  {
+    code: 'ten_active_days',
+    test: (ctx) => ctx.activeDays.length >= 10,
+  },
+  {
+    code: 'health_25',
+    test: (ctx) => (ctx.perCategoryCount.health ?? 0) >= 25,
+  },
+  {
+    code: 'early_bird_5',
+    test: (ctx) => bucketCount(ctx, 'early') >= 5,
+  },
+  {
+    code: 'hardcore_20',
+    test: (ctx) => hardCount(ctx) >= 20,
+  },
+  {
+    code: 'twenty_active_days',
+    test: (ctx) => ctx.activeDays.length >= 20,
+  },
+  {
+    code: 'xp_2000',
+    test: (ctx) => ctx.totalXp >= 2000,
+  },
+  {
+    code: 'variety_100',
+    test: (ctx) => distinctQuestCount(ctx) >= 100,
+  },
+  {
+    code: 'variety_150',
+    test: (ctx) => distinctQuestCount(ctx) >= 150,
+  },
+  {
+    code: 'xp_5000',
+    test: (ctx) => ctx.totalXp >= 5000,
+  },
+
+  // --- recurring rewards, last so they never shadow a milestone -----------
   {
     code: 'personal_record_day',
     test: hasNewDayRecord,

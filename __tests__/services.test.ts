@@ -182,7 +182,7 @@ describe('ProgressionService.completeQuest', () => {
 });
 
 describe('AchievementService', () => {
-  test('checkAfterCompletion awards midnight_owl at 02:00', async () => {
+  test('checkAfterCompletion grants at most one achievement per completion', async () => {
     const { user, db } = await setup();
     await seedCatalog(db);
     const qRepo = new QuestRepo(db);
@@ -195,7 +195,34 @@ describe('AchievementService', () => {
     const unlocks = await aSvc.checkAfterCompletion(user.id, {
       completionAt: at, category: 'health', questId: q.id, difficulty: 1, xpAwarded: 10,
     });
-    expect(unlocks.find((u) => u.code === 'midnight_owl')).toBeTruthy();
+    // 02:00 satisfies first_step, midnight_owl and both personal-best rules.
+    // Exactly one is granted, and it is the first in rule order.
+    expect(unlocks).toHaveLength(1);
+    expect(unlocks[0]?.code).toBe('first_step');
+  });
+
+  test('the time-of-day achievement is granted on a later completion', async () => {
+    const { user, db } = await setup();
+    await seedCatalog(db);
+    const qRepo = new QuestRepo(db);
+    const q = await qRepo.insert({
+      user_id: null, title: 'A', description: null, category: 'health',
+      difficulty: 1, xp_reward: 10, is_system: 1, is_active: 1,
+    });
+    const aSvc = new AchievementService(db);
+    const at = new Date('2026-08-28T02:00:00');
+    await aSvc.checkAfterCompletion(user.id, {
+      completionAt: at, category: 'health', questId: q.id, difficulty: 1, xpAwarded: 10,
+    });
+    const second = await qRepo.insert({
+      user_id: null, title: 'B', description: null, category: 'health',
+      difficulty: 1, xp_reward: 10, is_system: 1, is_active: 1,
+    });
+    const later = await aSvc.checkAfterCompletion(user.id, {
+      completionAt: at, category: 'health', questId: second.id, difficulty: 1, xpAwarded: 10,
+    });
+    expect(later.map((item) => item.code)).toContain('midnight_owl');
+    expect(later).toHaveLength(1);
   });
 
   test('does not re-unlock on second completion', async () => {
@@ -211,11 +238,18 @@ describe('AchievementService', () => {
     const first = await aSvc.checkAfterCompletion(user.id, {
       completionAt: at, category: 'health', questId: q.id, difficulty: 1, xpAwarded: 10,
     });
-    expect(first.find((u) => u.code === 'midnight_owl')).toBeTruthy();
+    expect(first.map((item) => item.code)).toEqual(['first_step']);
     const second = await aSvc.checkAfterCompletion(user.id, {
       completionAt: at, category: 'health', questId: q.id, difficulty: 1, xpAwarded: 10,
     });
-    expect(second.find((u) => u.code === 'midnight_owl')).toBeFalsy();
+    // first_step is held, so the next passing rule in order wins instead -
+    // but nothing is ever granted twice.
+    expect(second.map((item) => item.code)).not.toContain('first_step');
+    const third = await aSvc.checkAfterCompletion(user.id, {
+      completionAt: at, category: 'health', questId: q.id, difficulty: 1, xpAwarded: 10,
+    });
+    const all = [...first, ...second, ...third].map((item) => item.code);
+    expect(new Set(all).size).toBe(all.length);
   });
 
   test('personal_best updated on each completion', async () => {
@@ -293,14 +327,12 @@ describe('AchievementService', () => {
       difficulty: 1,
       xpAwarded: result.xpAwarded,
     });
-    expect(unlocks.some((item) => item.code === 'first_step')).toBe(true);
-    expect(unlocks.some((item) => item.code === 'first_quest')).toBe(true);
-    expect(unlocks.some((item) => item.code === 'personal_record_day')).toBe(true);
-    expect(unlocks.some((item) => item.code === 'category_personal_best')).toBe(true);
+    // One completion, one achievement. first_step is first in rule order.
+    expect(unlocks.map((item) => item.code)).toEqual(['first_step']);
 
-    const listed = await aSvc.listUnlocked(user.id);
-    expect(listed.find((item) => item.code === 'first_quest')?.icon).toBe('🌱');
-    expect(listed.find((item) => item.code === 'first_quest')?.id).toBeTruthy();
+    // first_quest is the *third distinct* quest, so it is still locked
+    // here - that is what stops the first completion from shadowing it.
+    expect((await aSvc.listUnlocked(user.id)).some((item) => item.code === 'first_quest')).toBe(false);
 
     const removed = await aSvc.removeUnlocks(user.id, ['first_step']);
     expect(removed.removed).toBe(1);
@@ -426,10 +458,12 @@ describe('AchievementService', () => {
     await aSvc.syncFromHistory(user.id);
     const codes = new Set((await aSvc.listUnlocked(user.id)).map((item) => item.code));
     expect(codes.has('first_step')).toBe(true);
-    expect(codes.has('first_quest')).toBe(true);
+
     expect(codes.has('week_streak')).toBe(true);
     expect(codes.has('health_balance')).toBe(true);
     expect(codes.has('early_bird')).toBe(true);
+    // The recurring personal-best rules are last in RULES, so they only
+    // win on an event where no milestone is pending.
     expect(codes.has('personal_record_day')).toBe(true);
     expect(codes.has('category_personal_best')).toBe(true);
     const pbs = await aSvc.listPersonalBests(user.id);

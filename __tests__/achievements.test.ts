@@ -117,9 +117,29 @@ describe('achievement rules', () => {
     expect(ruleTest('first_step', emptyCtx())).toBe(false);
     expect(ruleTest('first_quest', emptyCtx())).toBe(false);
     expect(ruleTest('first_step', emptyCtx({ totalCompletions: 1 }))).toBe(true);
+    // `first_quest` is deliberately the *third* distinct quest, not the
+    // first. Both used to fire on the very first completion, which made one
+    // of them permanently unreachable once a completion may only grant a
+    // single achievement.
     expect(ruleTest('first_quest', emptyCtx({
-      distinctQuestIds: new Set(['q-first']),
+      distinctQuestIds: new Set(['q-1']),
+    }))).toBe(false);
+    expect(ruleTest('first_quest', emptyCtx({
+      distinctQuestIds: new Set(['q-1', 'q-2', 'q-3']),
     }))).toBe(true);
+  });
+
+  test('the recurring personal-best rules are ordered last', () => {
+    // They fire on almost every new record, so if they sat in the middle
+    // they would shadow every milestone queued behind them.
+    const codes = RULES.map((rule) => rule.code);
+    expect(codes[codes.length - 1]).toBe('category_personal_best');
+    expect(codes[codes.length - 2]).toBe('personal_record_day');
+  });
+
+  test('every rule has a distinct code', () => {
+    const codes = RULES.map((rule) => rule.code);
+    expect(new Set(codes).size).toBe(codes.length);
   });
 
   test('weekend_warrior needs 10 quests in the current weekend', () => {
