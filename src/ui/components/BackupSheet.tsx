@@ -117,6 +117,10 @@ export function BackupSheet({ ctx, appVersion, onClose, onRestored }: Props) {
     setBusy('import');
     try {
       const result = await restoreBackup(ctx.db, payload);
+      // The restore rewrites the quest table through raw SQL, so the
+      // in-memory catalogue cache has to be dropped explicitly or the quest
+      // list keeps serving the pre-restore rows until the next restart.
+      ctx.quest.invalidateCatalogue();
       setPendingRestore(null);
       const orphanNote = result.orphaned > 0 ? `, ${result.orphaned} записей без квеста` : '';
       setNotice({
