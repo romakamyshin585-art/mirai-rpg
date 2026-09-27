@@ -559,11 +559,27 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
   const categoryColor = colors[`cat${quest.category.charAt(0).toUpperCase()}${quest.category.slice(1)}` as keyof typeof colors];
   const pressProgress = useSharedValue(1);
   const checkProgress = useSharedValue(1);
-  const xpOpacity = useSharedValue(0);
-  const xpOffset = useSharedValue(0);
   const halo = useSharedValue(0);
   const punch = useSharedValue(1);
   const tint = useSharedValue(0);
+  /**
+   * The burst is a one-shot, so it is unmounted once it has played.
+   * `completed` stays true for the rest of the session, and leaving a
+   * spark layer with eight animated views mounted on every completed card
+   * in a 226-row list is a real per-frame cost for an animation nobody is
+   * watching any more.
+   */
+  const [burstActive, setBurstActive] = useState(false);
+
+  useEffect(() => {
+    if (!completed) {
+      setBurstActive(false);
+      return;
+    }
+    setBurstActive(true);
+    const timer = setTimeout(() => setBurstActive(false), 950);
+    return () => clearTimeout(timer);
+  }, [completed]);
 
   useEffect(() => {
     if (!highlighted) {
@@ -586,8 +602,6 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
     if (!completed) {
       pressProgress.value = reduced ? 1 : withTiming(1, { duration: duration.standard });
       checkProgress.value = 1;
-      xpOpacity.value = 0;
-      xpOffset.value = 0;
       punch.value = 1;
       tint.value = 0;
       return;
@@ -622,11 +636,7 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
           withTiming(1.24, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
           withSpring(1, spring.punch),
         );
-    xpOpacity.value = reduced
-      ? withDelay(180, withSequence(withTiming(1, { duration: duration.reducedMotion }), withDelay(180, withTiming(0, { duration: duration.reducedMotion }))))
-      : withDelay(180, withSequence(withTiming(1, { duration: duration.micro }), withDelay(420, withTiming(0, { duration: duration.standard }))));
-    xpOffset.value = reduced ? 0 : withDelay(180, withTiming(-32, { duration: duration.standard, easing: Easing.out(Easing.cubic) }));
-  }, [checkProgress, completed, pressProgress, punch, reduced, tint, xpOffset, xpOpacity]);
+  }, [checkProgress, completed, pressProgress, punch, reduced, tint]);
 
   const cardStyle = useAnimatedStyle(() => ({
     transform: reduced ? [] : [{ scale: pressProgress.value * punch.value }],
@@ -649,10 +659,6 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
   }));
   const checkStyle = useAnimatedStyle(() => ({
     transform: reduced ? [] : [{ scale: checkProgress.value }],
-  }));
-  const xpStyle = useAnimatedStyle(() => ({
-    opacity: xpOpacity.value,
-    transform: reduced ? [] : [{ translateY: xpOffset.value }],
   }));
   const handleCardPressIn = () => {
     if (!reduced) pressProgress.value = withSpring(scale.cardPress, spring.card);
@@ -686,13 +692,10 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
         ]}
       >
         <CompletionBurst
-          active={completed}
+          active={burstActive}
           xp={quest.xp_reward}
           accent={colors.accent}
         />
-      <Animated.View pointerEvents="none" style={[styles.xpBurst, xpStyle]}>
-        <Text style={[styles.xpBurstText, { color: colors.accent }]}>+{quest.xp_reward} XP</Text>
-      </Animated.View>
       <View style={styles.questTop}>
         <View style={[styles.categoryIcon, { backgroundColor: `${categoryColor}20` }]}>
           <LucideIcon name={CATEGORY_ICONS[quest.category]} size={21} color={categoryColor} />
@@ -931,8 +934,6 @@ const styles = StyleSheet.create({
   questCardHaloWrap: { position: 'relative' },
   questCardHalo: { position: 'absolute', top: -3, left: -3, right: -3, bottom: -3, borderWidth: 1.5 },
   questCard: { borderWidth: 1, padding: 14, position: 'relative', overflow: 'hidden' },
-  xpBurst: { position: 'absolute', top: 8, right: 14, zIndex: 2 },
-  xpBurstText: { fontFamily: 'Nunito', fontSize: 14, lineHeight: 18, fontWeight: '900' },
   completionProgress: { marginTop: 10 },
   questTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 11 },
   categoryIcon: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },

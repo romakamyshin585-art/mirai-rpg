@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
@@ -142,7 +142,14 @@ export function ArchivedQuestsSheet({
             </Text>
           </View>
         ) : (
-          <View style={styles.list}>
+          // Scrollable, and it has to be: the whole point of this sheet is
+          // that a large number of quests can be hidden at once, and a
+          // plain View inside a maxHeight sheet would just clip the tail.
+          <ScrollView
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+          >
             {rows.map(row => {
               const tint = colors[`cat${row.category.charAt(0).toUpperCase()}${row.category.slice(1)}` as keyof typeof colors];
               return (
@@ -180,7 +187,7 @@ export function ArchivedQuestsSheet({
                 </View>
               );
             })}
-          </View>
+          </ScrollView>
         )}
       </Animated.View>
     </Overlay>
@@ -194,7 +201,8 @@ const styles = StyleSheet.create({
   close: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   empty: { alignItems: 'center', paddingVertical: 32, paddingHorizontal: 16, gap: 14 },
   emptyIcon: { width: 60, height: 60, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  list: { marginTop: 16, gap: 8 },
+  list: { marginTop: 16, flexShrink: 1, minHeight: 0 },
+  listContent: { gap: 8, paddingBottom: 4 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, padding: 10 },
   rowIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   rowCopy: { flex: 1, minWidth: 0 },
