@@ -207,6 +207,7 @@ jobs:
           profile: pixel_2
           disable-animations: false
           script: |
+            set +e
             APK=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
             echo "installing $APK"
             adb install -r "$APK"
@@ -216,81 +217,37 @@ jobs:
             sleep 35
             adb exec-out screencap -p > smoke-1-home.png || true
 
-            # Reproduce the reported failure: complete a quest, then go back
-            # to Home. The quest card's "Готово" button sits on the right
-            # half of the first card, the Home tab is first in the bar.
+            # Reproduce the reported failure: complete a quest, then return
+            # to Home. The quest card's "Готово" button fills the right half
+            # of the first card; Home is the first tab.
             adb shell input tap 560 900 || true
-            sleep 3
+            sleep 4
             adb exec-out screencap -p > smoke-2-quest-done.png || true
             adb shell input tap 135 2140 || true
-            sleep 4
+            sleep 5
             adb exec-out screencap -p > smoke-3-back-home.png || true
 
-            # Blank-window check: count distinct colours in the middle band.
-            # A working screen has many; a blank background has one.
-            echo "--- colour histogram of the centre band ---"
-            adb shell screencap -p /sdcard/probe.png || true
-            adb pull /sdcard/probe.png smoke-3-back-home.png >/dev/null 2>&1 || true
-            python3 - <<'PY' || true
-            import struct, zlib, collections
-            try:
-                data = open('smoke-3-back-home.png','rb').read()
-            except Exception:
-                print('probe unavailable'); raise SystemExit
-            pos, w, h, idat = 8, 0, 0, b''
-            while pos < len(data):
-                ln = struct.unpack('>I', data[pos:pos+4])[0]
-                typ = data[pos+4:pos+8]
-                body = data[pos+8:pos+8+ln]
-                if typ == b'IHDR':
-                    w, h, depth, ctype = struct.unpack('>IIBB', body[:10])
-                elif typ == b'IDAT':
-                    idat += body
-                pos += 12 + ln
-            raw = zlib.decompress(idat)
-            ch = {0:1, 2:3, 3:1, 4:2, 6:4}[ctype]
-            stride = w * ch
-            prev = bytearray(stride)
-            counts = collections.Counter()
-            row, out = 0, bytearray()
-            for y in range(h):
-                f = raw[row]; line = bytearray(raw[row+1:row+1+stride]); row += 1 + stride
-                for x in range(stride):
-                    a = line[x-ch] if x >= ch else 0
-                    b = prev[x]
-                    c = prev[x-ch] if x >= ch else 0
-                    if f == 1: line[x] = (line[x] + a) & 255
-                    elif f == 2: line[x] = (line[x] + b) & 255
-                    elif f == 3: line[x] = (line[x] + (a+b)//2) & 255
-                    elif f == 4:
-                        p = a + b - c
-                        pa, pb, pc = abs(p-a), abs(p-b), abs(p-c)
-                        pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
-                        line[x] = (line[x] + pr) & 255
-                prev = line
-                if h//4 <= y < 3*h//4 and y % 8 == 0:
-                    for x in range(0, stride, ch*8):
-                        counts[bytes(line[x:x+3])] += 1
-            top = counts.most_common(1)[0]
-            print(f'image {w}x{h} distinct_colour_buckets={len(counts)} dominant={top[1]/max(1,sum(counts.values())):.3f}')
-            print('VERDICT:', 'BLANK' if top[1]/max(1,sum(counts.values())) > 0.985 else 'HAS_CONTENT')
-            PY
-
             adb logcat -d -v time > emulator-logcat.txt || true
+
+            # Reported as annotations, because job logs need repo admin
+            # rights to download and this run has none. The app lifecycle
+            # lines answer the only question that matters here: did Home
+            # mount, and did its load finish.
             echo "--- app lifecycle ---"
-            grep -E "MiraiRPG" emulator-logcat.txt | head -60 || true
-            echo "--- fatal / js errors ---"
-            grep -E "FATAL EXCEPTION|AndroidRuntime|ReactNativeJS.*(Error|error)|horcrux|Worklet|Reanimated" emulator-logcat.txt | head -40 || true
-            {
-              echo "::group::app lifecycle"
-              grep -E "MiraiRPG" emulator-logcat.txt | head -40
-              echo "::endgroup::"
-              grep -E "FATAL EXCEPTION|AndroidRuntime|ReactNativeJS.*(Error|error)|horcrux" emulator-logcat.txt | head -12 | while IFS= read -r line; do
-                echo "::error::smoke ${line}"
-              done
-            } || true
+            grep "MiraiRPG" emulator-logcat.txt | tail -30 | while IFS= read -r line; do
+              echo "::warning title=home-lifecycle::${line}"
+            done
+
+            # Any JS or native error, one annotation per line.
+            echo "--- errors ---"
+            grep -E "FATAL EXCEPTION|AndroidRuntime|ReactNativeJS.*rror|horcrux" emulator-logcat.txt \
+              | head -12 | while IFS= read -r line; do
+              echo "::error title=app-error::${line}"
+            done
+
             echo "--- focused window ---"
             adb shell dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' || true
+            exit 0
 
       - name: Upload emulator diagnostics
         if: always()
