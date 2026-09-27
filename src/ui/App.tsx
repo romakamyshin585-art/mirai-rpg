@@ -16,9 +16,10 @@ import { useNunitoFonts } from './fonts';
 import { LucideIcon } from './components';
 import { CelebrationOverlay } from './components/CelebrationOverlay';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
+import { ScreenBoundary } from './components/ScreenBoundary';
 import { MotionPressable } from './components/MotionPressable';
 import { OverlayProvider, useOverlayActivity } from './components/Overlay';
-import { HAPTIC_EVENTS, duration, scale, spring, useHaptics, usePressAnimation, useReducedMotion } from './motion';
+import { HAPTIC_EVENTS, duration, scale, spring, useGuaranteedEntrance, useHaptics, usePressAnimation, useReducedMotion } from './motion';
 
 type Tab = 'home' | 'quests' | 'calendar' | 'achievements';
 
@@ -169,6 +170,7 @@ function AppContent() {
       <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
       <View style={styles.screenHost}>
         <ScreenTransition key={tab} tab={tab} direction={transitionDirection}>
+          <ScreenBoundary label={TAB_LABELS[tab]} onRetry={markDataChanged}>
           {tab === 'home' ? (
             <HomeScreen
               ctx={ctx}
@@ -221,30 +223,9 @@ function AppContent() {
               onDataChanged={markDataChanged}
             />
           )}
+          </ScreenBoundary>
         </ScreenTransition>
         <BottomTab tab={tab} onChange={changeTab} />
-        {/* Scrim under the floating tab bar. The bar is translucent on
-            purpose, which meant list text underneath stayed legible
-            through it and collided with the tab labels. Four stacked bands
-            fake a vertical fade without pulling in a gradient library. */}
-        <View
-          pointerEvents="none"
-          style={[styles.navScrimWrap, { bottom: Math.max(insets.bottom + 6, 12) + BOTTOM_NAV_BASE_HEIGHT - 22 }]}
-        >
-          {[0, 1, 2, 3].map(band => (
-            <View
-              key={band}
-              style={[
-                styles.navScrimBand,
-                {
-                  bottom: band * 13,
-                  backgroundColor: colors.bg,
-                  opacity: 0.9 - band * 0.26,
-                },
-              ]}
-            />
-          ))}
-        </View>
         <Toast
           message={toast?.message ?? null}
           actionLabel={toast?.actionLabel}
@@ -292,16 +273,27 @@ function ScreenTransition({
   children: ReactNode;
 }) {
   const reduced = useReducedMotion();
-  const progress = useSharedValue(0);
+  const progress = useSharedValue(1);
 
-  useEffect(() => {
-    progress.value = reduced
-      ? withTiming(1, { duration: duration.reducedMotion, easing: Easing.out(Easing.cubic) })
-      : withSpring(1, spring.navigation);
-  }, [direction, progress, reduced, tab]);
+  // Visibility is guaranteed: see `useGuaranteedEntrance`. A tab that
+  // cannot animate in still shows itself, because a missing entrance
+  // transition is a cosmetic loss while an invisible tab locks the user
+  // out of the app.
+  useGuaranteedEntrance(
+    progress,
+    () => {
+      progress.value = 0;
+      return reduced
+        ? withTiming(1, { duration: duration.reducedMotion, easing: Easing.out(Easing.cubic) })
+        : withSpring(1, spring.navigation);
+    },
+    [direction, reduced, tab],
+  );
 
   const style = useAnimatedStyle(() => {
-    if (reduced) return { opacity: progress.value, transform: [] };
+    if (reduced) {
+      return { opacity: progress.value, transform: [] };
+    }
     // Depth, not just a slide: the incoming screen arrives from slightly
     // further away and settles in, so switching tabs reads as moving
     // between two planes instead of sliding a bitmap sideways.
@@ -323,6 +315,12 @@ const TABS: Array<{ key: Tab; icon: string; label: string }> = [
   { key: 'calendar', icon: 'calendar-days', label: 'Календарь' },
   { key: 'achievements', icon: 'trophy', label: 'Достижения' },
 ];
+
+/** Same strings, for the per-tab error boundary. */
+const TAB_LABELS: Record<Tab, string> = TABS.reduce(
+  (acc, item) => ({ ...acc, [item.key]: item.label }),
+  {} as Record<Tab, string>,
+);
 
 function BottomTab({ tab, onChange }: { tab: Tab; onChange: (tab: Tab) => void }) {
   const { colors, materials, isDark } = useTheme();
@@ -365,7 +363,13 @@ function BottomTab({ tab, onChange }: { tab: Tab; onChange: (tab: Tab) => void }
           // the layer falls back to a solid translucent fill, because a
           // live blur behind a scrolling list costs frames there.
           backgroundColor:
-            Platform.OS === 'ios' ? 'rgba(24,27,36,0.5)' : colors.surfaceOverlay,
+            // Android: fully opaque. A translucent bar over a scrolling list
+            // makes the list text legible through it, and a fake gradient
+            // scrim under the bar is worse still - four stacked bands at
+            // stepped opacities read as a hard horizontal stripe above the
+            // pill on every tab. So on Android the bar is simply solid, and
+            // iOS keeps the blurred Material.
+            Platform.OS === 'ios' ? 'rgba(24,27,36,0.5)' : colors.surface,
           borderColor: colors.borderSubtle,
           opacity: overlayActive ? 0 : 1,
         },
@@ -492,13 +496,6 @@ const styles = StyleSheet.create({
   stageText: { fontFamily: 'Nunito', fontSize: 12, marginTop: 10, marginBottom: 20 },
   retryButton: { minHeight: 48, paddingHorizontal: 24, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   retryLabel: { fontFamily: 'Nunito', fontSize: 15, fontWeight: '800' },
-  navScrimWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: 52,
-  },
-  navScrimBand: { position: 'absolute', left: 0, right: 0, height: 13 },
   navContainer: {
     position: 'absolute',
     left: 16,

@@ -3,7 +3,7 @@
  */
 
 import type { DbExecutor } from '../db/executor';
-import { QuestRepo, CompletionRepo } from '../repos/quest_repo';
+import { QuestRepo, CompletionRepo, type QuestRow } from '../repos/quest_repo';
 import type { Category } from '../domain/category';
 import { dayKey } from '../domain/time';
 
@@ -26,15 +26,36 @@ export interface TodayProgress {
 export class QuestService {
   private q: QuestRepo;
   private c: CompletionRepo;
+  /**
+   * Catalogue cache.
+   *
+   * The catalogue is 226 rows and it is read by Home on every mount, by
+   * every tab switch, and again after every completion. SQLite is not the
+   * slow part - the transfer into JS and the re-ranking on top of it are.
+   *
+   * So the full list is held in memory and invalidated explicitly, by the
+   * only three operations that can change it: create, archive, restore.
+   * Reads therefore cost nothing after the first call, and the cache can
+   * never disagree with the database because every write path bumps the
+   * generation.
+   */
+  private cache: { generation: number; rows: QuestRow[] | null } = { generation: 0, rows: null };
+
   constructor(db: DbExecutor) {
     this.q = new QuestRepo(db);
     this.c = new CompletionRepo(db);
   }
 
-  list(userId: string, filter?: { category?: Category }) {
-    return this.q.listForUser(userId).then((rows) =>
-      filter?.category ? rows.filter((r) => r.category === filter.category) : rows,
-    );
+  /** Drop the cached catalogue. Called by every mutation of the catalogue. */
+  invalidateCatalogue(): void {
+    this.cache.rows = null;
+    this.cache.generation += 1;
+  }
+
+  async list(userId: string, filter?: { category?: Category }): Promise<QuestRow[]> {
+    if (!this.cache.rows) this.cache.rows = await this.q.listForUser(userId);
+    const rows = this.cache.rows;
+    return filter?.category ? rows.filter(row => row.category === filter.category) : rows;
   }
 
   get(id: string) {
@@ -54,7 +75,7 @@ export class QuestService {
   }
 
   async create(userId: string, opts: { title: string; category: Category; difficulty: 1 | 2 | 3; xp_reward: number; description?: string }) {
-    return this.q.insert({
+    const row = await this.q.insert({
       user_id: userId,
       title: opts.title,
       description: opts.description ?? null,
@@ -64,14 +85,18 @@ export class QuestService {
       is_system: 0,
       is_active: 1,
     });
+    this.invalidateCatalogue();
+    return row;
   }
 
   async archive(id: string) {
-    return this.q.setActive(id, false);
+    await this.q.setActive(id, false);
+    this.invalidateCatalogue();
   }
 
   async restore(id: string) {
-    return this.q.setActive(id, true);
+    await this.q.setActive(id, true);
+    this.invalidateCatalogue();
   }
 
   async getTodayProgress(userId: string): Promise<TodayProgress> {

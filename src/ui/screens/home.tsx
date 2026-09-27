@@ -46,7 +46,7 @@ import { MotionNumber } from '../components/MotionNumber';
 import { MotionProgressBar } from '../components/MotionProgressBar';
 import { MotionReveal } from '../components/MotionReveal';
 import { CrystalMark } from '../components/CrystalMark';
-import { duration, spring, useReducedMotion, useScrollHeader } from '../motion';
+import { duration, spring, useGuaranteedEntrance, useReducedMotion, useScrollHeader } from '../motion';
 
 const DAILY_GOAL = 5;
 const RECOMMENDATION_COUNT = 3;
@@ -137,6 +137,20 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
   const [activeQuests, setActiveQuests] = useState<QuestRow[]>([]);
   const [nextQuest, setNextQuest] = useState<QuestRow | null>(null);
   const [recommendations, setRecommendations] = useState<ScoredQuest[]>([]);
+  /**
+   * The three inputs the recommendation ranking actually reads from the
+   * database. Kept separate from the nine other pieces of screen state so a
+   * change to any of them re-ranks three quests instead of re-querying
+   * everything.
+   */
+  const [rankedInput, setRankedInput] = useState<{
+    quests: QuestRow[];
+    stats: AxisStats;
+    level: number;
+  } | null>(null);
+  // Refs, not state: writing them must not schedule a data reload.
+  const dismissedRef = useRef<string[]>([]);
+  const shownCountsRef = useRef<Record<string, number>>({});
   const [weekly, setWeekly] = useState<WeeklyReport | null>(null);
   const [weeklyXpByCategory, setWeeklyXpByCategory] = useState<Record<string, number>>({});
   const [unlocked, setUnlocked] = useState(0);
@@ -147,8 +161,10 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
   const [showActivity, setShowActivity] = useState(false);
   const [axisSheet, setAxisSheet] = useState<Category | null>(null);
   const [jumping, setJumping] = useState<string | null>(null);
-  const [dismissed, setDismissed] = useState<string[]>([]);
-  const [shownCounts, setShownCounts] = useState<Record<string, number>>({});
+  // Mirrors of `dismissedRef` / `shownCountsRef` that exist only to force a
+  // repaint after a write. Nothing reads them.
+  const [, setDismissedTick] = useState(0);
+  const [, setShownTick] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,12 +172,17 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
 
   useEffect(() => {
     const store = readDismissals();
-    setDismissed(store.dismissed);
-    setShownCounts(store.shown);
+    dismissedRef.current = store.dismissed;
+    shownCountsRef.current = store.shown;
+    setDismissedTick(1);
+    setShownTick(1);
   }, []);
 
   const loadData = useCallback(async () => {
     setError(null);
+    // Cheap, and decisive when a device-only failure has to be explained
+    // from a logcat: mount, load start, load end, and which branch rendered.
+    console.log('[MiraiRPG] Home: load start');
     try {
       const char = await ctx.character.get(ctx.userId);
       if (!char) throw new Error('Персонаж не найден');
@@ -181,20 +202,6 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
         ]);
 
       const axisStats: AxisStats = axisStatsFromRows(characterStats);
-      const ranked = recommend({
-        stats: axisStats,
-        level: char.level,
-        quests: quests.map(quest => ({
-          id: quest.id,
-          title: quest.title,
-          category: quest.category,
-          difficulty: quest.difficulty,
-          xpReward: quest.xp_reward,
-        })),
-        shownCounts,
-        dismissed,
-        limit: RECOMMENDATION_COUNT,
-      });
 
       setCharacter(char);
       setStats(characterStats);
@@ -203,7 +210,6 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
       setStreak(currentStreak);
       setActiveQuests(quests);
       setNextQuest(quests[0] ?? null);
-      setRecommendations(ranked);
       setUnlocked(unlockedRows.length);
       setTotalAchievements(catalog.length);
       setPersonalBests(bests);
@@ -217,7 +223,6 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
           })),
           unlocks: unlockedRows.map(row => ({ code: row.code, name: row.name, unlockedAt: row.unlockedAt })),
           axisTotals: Object.keys(axisStats).length > 0 ? axisStats : emptyAxisStats(),
-          nextWeekHint: ranked[0]?.reason ?? null,
         }),
       );
 
@@ -226,16 +231,56 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
         weeklyXp[row.category] = (weeklyXp[row.category] ?? 0) + row.xp_awarded;
       }
       setWeeklyXpByCategory(weeklyXp);
+      // Only the inputs the ranking actually depends on. `dismissed` and
+      // `shownCounts` are read from refs inside the memo below, so writing
+      // them no longer re-runs these nine queries - that re-ranking on
+      // every show was the "долго грузится и перебирает квесты" symptom.
+      setRankedInput({ quests, stats: axisStats, level: char.level });
+      console.log(
+        `[MiraiRPG] Home: load done level=${char.level} xp=${char.xp} quests=${quests.length} bests=${bests.length} activity=${activity.length}`,
+      );
     } catch (value) {
       setError(value instanceof Error ? value.message : String(value));
+      console.error('[MiraiRPG] Home: load failed', value);
     } finally {
       setLoading(false);
     }
-  }, [ctx, dismissed, shownCounts]);
+  }, [ctx]);
+
+  useEffect(() => {
+    console.log('[MiraiRPG] Home: mount');
+    return () => console.log('[MiraiRPG] Home: unmount');
+  }, []);
 
   useEffect(() => {
     void loadData();
   }, [loadData, revision]);
+
+  /**
+   * Ranking is a pure function of the catalogue, the five stat totals and
+   * the level. It is recomputed only when one of those three changes; the
+   * `dismissed` / `shown` bookkeeping is read from refs so recording a show
+   * cannot trigger another pass over 226 quests.
+   */
+  useEffect(() => {
+    if (!rankedInput) return;
+    setRecommendations(
+      recommend({
+        stats: rankedInput.stats,
+        level: rankedInput.level,
+        quests: rankedInput.quests.map(quest => ({
+          id: quest.id,
+          title: quest.title,
+          category: quest.category,
+          difficulty: quest.difficulty,
+          xpReward: quest.xp_reward,
+        })),
+        shownCounts: shownCountsRef.current,
+        dismissed: dismissedRef.current,
+        limit: RECOMMENDATION_COUNT,
+      }),
+    );
+  }, [rankedInput]);
 
   // Count each recommendation once per session so `freshness` can start
   // working from the second visit onwards.
@@ -244,14 +289,13 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
     const fresh = recommendations.filter(item => !countedRef.current.has(item.quest.id));
     if (fresh.length === 0) return;
     fresh.forEach(item => countedRef.current.add(item.quest.id));
-    setShownCounts(current => {
-      const next = { ...current };
-      fresh.forEach(item => {
-        next[item.quest.id] = (next[item.quest.id] ?? 0) + 1;
-      });
-      writeShown(next);
-      return next;
-    });
+    const next = { ...shownCountsRef.current };
+    for (const item of fresh) {
+      next[item.quest.id] = (next[item.quest.id] ?? 0) + 1;
+    }
+    shownCountsRef.current = next;
+    writeShown(next);
+    setShownTick(value => value + 1);
   }, [recommendations]);
 
   const refresh = async () => {
@@ -261,12 +305,14 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
   };
 
   const dismiss = (questId: string) => {
-    setDismissed(current => {
-      const next = current.includes(questId) ? current : [...current, questId];
+    const current = dismissedRef.current;
+    if (!current.includes(questId)) {
+      const next = [...current, questId];
+      dismissedRef.current = next;
       persistDismissed(next);
-      return next;
-    });
-    setRecommendations(current => current.filter(item => item.quest.id !== questId));
+      setDismissedTick(value => value + 1);
+    }
+    setRecommendations(items => items.filter(item => item.quest.id !== questId));
   };
 
   /**
@@ -541,13 +587,13 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
               </View>
               <LucideIcon name="compass" size={20} color={colors.accent} />
             </View>
-            {recommendations.map((item, index) => {
+            {recommendations.map(item => {
               const axisColor = colors[`cat${item.quest.category.charAt(0).toUpperCase()}${item.quest.category.slice(1)}` as keyof typeof colors];
               const leaving = jumping === item.quest.id;
               return (
                 <RecommendationRow
                   key={item.quest.id}
-                  index={index}
+                  slotKey={item.quest.id}
                   title={item.quest.title}
                   reason={item.reason}
                   category={item.quest.category}
@@ -719,7 +765,7 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
  * teleported.
  */
 function RecommendationRow({
-  index,
+  slotKey,
   title,
   reason,
   category,
@@ -729,7 +775,8 @@ function RecommendationRow({
   onOpen,
   onDismiss,
 }: {
-  index: number;
+  /** Stable identity for the entrance delay - the quest id, never the index. */
+  slotKey: string;
   title: string;
   reason: string;
   category: Category;
@@ -741,14 +788,23 @@ function RecommendationRow({
 }) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const reduced = useReducedMotion();
-  const entrance = useSharedValue(0);
+  const entrance = useSharedValue(1);
   const press = useSharedValue(0);
 
-  useEffect(() => {
-    entrance.value = reduced
-      ? withTiming(1, { duration: duration.reducedMotion })
-      : withDelay(70 + index * 80, withSpring(1, spring.card));
-  }, [entrance, index, reduced]);
+  // The delay is derived from the quest id, not from the row's position.
+  // The ranking re-sorts whenever a stat moves, and a delay keyed on the
+  // index made every re-sort restart the entrance animation - which is what
+  // the "Куда расти то появляется, то долго грузится" turned out to be.
+  const delay = useMemo(() => 70 + (hashSlot(slotKey) % 3) * 80, [slotKey]);
+
+  useGuaranteedEntrance(
+    entrance,
+    () =>
+      reduced
+        ? withTiming(1, { duration: duration.reducedMotion })
+        : withDelay(delay, withSpring(1, spring.card)),
+    [delay, reduced],
+  );
 
   const style = useAnimatedStyle(() => {
     if (leaving) {
@@ -915,8 +971,16 @@ function CollapsibleBlock({
   );
 }
 
-function formatRecordScope(scope: string): string {
-  if (scope === 'day') return 'Лучший день';
+/** Small stable hash, used only to stagger an entrance by quest id. */
+function hashSlot(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function formatRecordScope(scope: string): string {  if (scope === 'day') return 'Лучший день';
   if (scope.startsWith('category:')) {
     return `Категория: ${CATEGORY_LABELS[scope.slice(9) as Category] ?? scope.slice(9)}`;
   }

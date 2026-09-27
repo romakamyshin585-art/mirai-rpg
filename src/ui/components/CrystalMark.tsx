@@ -32,6 +32,7 @@ import Animated, {
   Extrapolate,
   cancelAnimation,
   interpolate,
+  useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -41,6 +42,9 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { Defs, LinearGradient, Line, Polygon, RadialGradient, Stop, Svg } from 'react-native-svg';
+
+const AnimatedStop = Animated.createAnimatedComponent(Stop);
+const AnimatedPolygon = Animated.createAnimatedComponent(Polygon);
 import { useTheme } from '../theme';
 import { duration, spring, useReducedMotion } from '../motion';
 
@@ -173,15 +177,24 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
         ],
   }));
 
-  const sheenStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: interpolate(sheen.value, [0, 1], [-size * 0.9, size * 0.9], Extrapolate.CLAMP) }],
-    opacity: animated && !reduced ? 0.55 : 0.3,
-  }));
+  // The sheen is a three-stop gradient whose bright band slides across the
+  // crystal. Animating the stops is the only way to keep a single SVG
+  // document; translating a nested <Svg> cannot.
+  const sheenProps = useAnimatedProps(() => {
+    'worklet';
+    const t = animated && !reduced ? sheen.value : 0.5;
+    return { offset: `${(t * 140 - 30).toFixed(2)}%` };
+  });
 
-  const coreStyle = useAnimatedStyle(() => ({
-    opacity: core.value,
-    transform: [{ scale: 0.4 + core.value * 0.6 }],
-  }));
+  const coreStopProps = useAnimatedProps(() => {
+    'worklet';
+    return { stopOpacity: (0.15 + core.value * 0.8).toFixed(3) };
+  });
+
+  const sheenPolygonProps = useAnimatedProps(() => {
+    'worklet';
+    return { opacity: (animated && !reduced ? 1 : 0.55).toFixed(3) };
+  });
 
   const facets = useMemo(
     () =>
@@ -216,12 +229,29 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
 
   return (
     <Animated.View style={[{ width: size, height: size }, wrapStyle]}>
+      {/*
+        One `<Svg>`, not three.
+
+        The sheen and the core used to be separate `<Svg>` elements that
+        referenced `url(#crystalSheen)` / `url(#crystalCore)` defined in a
+        *different* tree. A paint-server reference does not cross SVG
+        document boundaries, so the reference failed to resolve and the
+        crystal silhouette filled solid black — a black diamond in the
+        header. Everything now lives in a single tree, and the two moving
+        parts are animated through the gradient stops instead of by
+        transforming a nested view, which is both correct and cheaper.
+      */}
       <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <Defs>
           <LinearGradient id="crystalSheen" gradientUnits="userSpaceOnUse" x1={0} y1={0} x2={size * 0.4} y2={size}>
-            <Stop offset="0%" stopColor="#FFFFFF" stopOpacity="0" />
-            <Stop offset="50%" stopColor="#FFFFFF" stopOpacity="0.55" />
-            <Stop offset="100%" stopColor="#FFFFFF" stopOpacity="0" />
+            <AnimatedStop
+              animatedProps={sheenProps}
+              offset="0%"
+              stopColor="#FFFFFF"
+              stopOpacity={0}
+            />
+            <AnimatedStop offset="18%" stopColor="#FFFFFF" stopOpacity={0.5} />
+            <AnimatedStop offset="34%" stopColor="#FFFFFF" stopOpacity={0} />
           </LinearGradient>
           <RadialGradient
             id="crystalCore"
@@ -230,9 +260,14 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
             cy={size / 2 - size * 0.0085}
             r={size * 0.16}
           >
-            <Stop offset="0%" stopColor={colors.accent} stopOpacity="0.9" />
-            <Stop offset="60%" stopColor={colors.accent} stopOpacity="0.35" />
-            <Stop offset="100%" stopColor={colors.accent} stopOpacity="0" />
+            <AnimatedStop
+              animatedProps={coreStopProps}
+              offset="0%"
+              stopColor={colors.accent}
+              stopOpacity={0.95}
+            />
+            <AnimatedStop offset="55%" stopColor={colors.accent} stopOpacity={0.34} />
+            <AnimatedStop offset="100%" stopColor={colors.accent} stopOpacity={0} />
           </RadialGradient>
         </Defs>
 
@@ -254,18 +289,8 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
         ))}
 
         <Polygon points={outline} fill="none" stroke={colors.catKnowledge} strokeOpacity={0.55} strokeWidth={1.4} strokeLinejoin="round" />
-
-        <Animated.View style={sheenStyle} pointerEvents="none">
-          <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-            <Polygon points={outline} fill="url(#crystalSheen)" />
-          </Svg>
-        </Animated.View>
-
-        <Animated.View style={coreStyle} pointerEvents="none">
-          <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-            <Polygon points={outline} fill="url(#crystalCore)" />
-          </Svg>
-        </Animated.View>
+        <Polygon points={outline} fill="url(#crystalCore)" />
+        <AnimatedPolygon animatedProps={sheenPolygonProps} points={outline} fill="url(#crystalSheen)" />
       </Svg>
     </Animated.View>
   );

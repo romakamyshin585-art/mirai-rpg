@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Easing, Extrapolate, interpolate, interpolateColor, useAnimatedScrollHandler, useAnimatedStyle, useReducedMotion as useReanimatedReducedMotion, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
+import { useEffect, useRef, type DependencyList } from 'react';
+import { Easing, Extrapolate, cancelAnimation, interpolate, interpolateColor, useAnimatedScrollHandler, useAnimatedStyle, useReducedMotion as useReanimatedReducedMotion, useSharedValue, withDelay, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { playPredefined, supportsPredefined, type PredefinedEffect } from 'mirai-haptics';
 import { duration, scale, spring, stagger } from './motion/tokens';
@@ -215,6 +215,51 @@ export function scaleValue(value: number, from = 0.9, to = 1) {
 
 export function staggerDelay(index: number, baseDelay = 0, step = stagger.itemDelay) {
   return baseDelay + Math.min(index, stagger.maxStaggeredItems - 1) * step;
+}
+
+/**
+ * Start an entrance animation, and guarantee the element ends up visible.
+ *
+ * Why this exists: the app shipped a screen that went to a blank background
+ * with no interface and no error message, reproducibly, only on a device.
+ * Every reveal in the app derived its opacity from a shared value that
+ * started at 0 and was advanced by an animation kicked off in a
+ * `useEffect`. If that animation never reached the UI thread - a lost
+ * frame budget, a worklet that failed to build, an interrupted transition -
+ * the opacity stayed at 0 forever. There is no error, no red screen, and
+ * the global Error Boundary has nothing to catch, because nothing threw.
+ *
+ * The rule this encodes: **content visibility must never depend on an
+ * animation actually running.** The animation is decoration. If it does not
+ * arrive within `guardMs`, the value is snapped to its end state on the JS
+ * thread, which is cheap and always works.
+ *
+ * The cleanup also cancels the animation, so a remount cannot inherit a
+ * half-finished transition from the previous instance.
+ */
+export function useGuaranteedEntrance(
+  target: SharedValue<number>,
+  factory: () => number,
+  deps: DependencyList,
+  guardMs = 420,
+): void {
+  const factoryRef = useRef(factory);
+  factoryRef.current = factory;
+
+  useEffect(() => {
+    target.value = factoryRef.current();
+    const guard = setTimeout(() => {
+      if (target.value < 0.999) {
+        cancelAnimation(target);
+        target.value = 1;
+      }
+    }, guardMs);
+    return () => {
+      clearTimeout(guard);
+      cancelAnimation(target);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, guardMs, ...deps]);
 }
 
 export type HapticType = 'selection' | 'light' | 'medium' | 'heavy' | 'success' | 'error' | 'warning';
