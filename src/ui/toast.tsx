@@ -10,10 +10,12 @@ type ToastProps = {
   actionLabel?: string;
   onAction?: () => Promise<void> | void;
   onHide: () => void;
-  bottomOffset: number;
+  bottomOffset?: number;
+  /** Used instead of bottomOffset when a bottom sheet owns the lower screen. */
+  top?: number;
 };
 
-export function Toast({ message, actionLabel, onAction, onHide, bottomOffset }: ToastProps) {
+export function Toast({ message, actionLabel, onAction, onHide, bottomOffset, top }: ToastProps) {
   const { colors, radius, typography } = useTheme();
   const reduced = useReducedMotion();
   const progress = useSharedValue(0);
@@ -58,7 +60,7 @@ export function Toast({ message, actionLabel, onAction, onHide, bottomOffset }: 
   return (
     <Animated.View
       pointerEvents="box-none"
-      style={[styles.host, hostStyle, { bottom: bottomOffset }]}
+      style={[styles.host, hostStyle, top !== undefined ? { top } : { bottom: bottomOffset }]}
     >
       <View
         style={[
@@ -98,7 +100,7 @@ export function Toast({ message, actionLabel, onAction, onHide, bottomOffset }: 
 }
 
 const styles = StyleSheet.create({
-  host: { position: 'absolute', left: 12, right: 12, zIndex: 80 },
+  host: { position: 'absolute', left: 12, right: 12, zIndex: 120 },
   toast: {
     minHeight: 58,
     borderWidth: 1,

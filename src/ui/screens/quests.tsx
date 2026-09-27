@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, interpolateColor, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import type { AppContext } from '../app_context';
 import type { QuestRow } from '../../repos/quest_repo';
 import { CATEGORIES, type Category } from '../../domain/category';
@@ -15,6 +15,8 @@ import { MotionPressable } from '../components/MotionPressable';
 import { HAPTIC_EVENTS, duration, scale, spring, useHaptics, useReducedMotion } from '../motion';
 import { MotionProgressBar } from '../components/MotionProgressBar';
 import { QuestSearchField } from '../components/QuestSearchField';
+import { CompletionBurst } from '../components/CompletionBurst';
+import { ArchivedQuestsSheet } from '../components/ArchivedQuestsSheet';
 import { searchQuests } from '../../domain/quest_search';
 
 const CATEGORY_ICONS: Record<Category, string> = {
@@ -84,6 +86,7 @@ export function QuestsScreen({
   const [busy, setBusy] = useState<string | null>(null);
   const [undoing, setUndoing] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [morphOrigin, setMorphOrigin] = useState<MorphOrigin | undefined>(undefined);
   const [pendingArchive, setPendingArchive] = useState<QuestRow | null>(null);
   // One shared value drives both the add icon and the sheet it opens, so
@@ -478,6 +481,25 @@ export function QuestsScreen({
               </View>
             )
           }
+          ListFooterComponent={
+            <MotionPressable
+              accessibilityRole="button"
+              accessibilityLabel="Скрытые квесты"
+              onPress={() => setShowArchived(true)}
+              style={[styles.archivedRow, { borderColor: colors.borderSubtle, backgroundColor: colors.surface, borderRadius: radius.lg }]}
+            >
+              <View style={[styles.archivedIcon, { backgroundColor: colors.surfaceElevated }]}>
+                <LucideIcon name="archive-restore" size={17} color={colors.accent} />
+              </View>
+              <View style={styles.archivedCopy}>
+                <Text style={[typography.bodyStrong, { color: colors.text }]}>Скрытые квесты</Text>
+                <Text style={[typography.caption, { color: colors.textMuted }]}>
+                  Нажми «×» на карточке — квест уходит отсюда, но его можно вернуть
+                </Text>
+              </View>
+              <LucideIcon name="chevron-right" size={17} color={colors.textMuted} />
+            </MotionPressable>
+          }
         />
       )}
 
@@ -487,6 +509,16 @@ export function QuestsScreen({
         onSubmit={createQuest}
         morphOrigin={morphOrigin}
         sharedProgress={createProgress}
+      />
+      <ArchivedQuestsSheet
+        ctx={ctx}
+        revision={revision}
+        visible={showArchived}
+        onClose={() => setShowArchived(false)}
+        onRestored={() => {
+          setShowArchived(false);
+          onDataChanged();
+        }}
       />
       <FocusModeModal
         visible={focusQuest !== null}
@@ -530,6 +562,8 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
   const xpOpacity = useSharedValue(0);
   const xpOffset = useSharedValue(0);
   const halo = useSharedValue(0);
+  const punch = useSharedValue(1);
+  const tint = useSharedValue(0);
 
   useEffect(() => {
     if (!highlighted) {
@@ -554,6 +588,8 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
       checkProgress.value = 1;
       xpOpacity.value = 0;
       xpOffset.value = 0;
+      punch.value = 1;
+      tint.value = 0;
       return;
     }
 
@@ -563,20 +599,49 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
           withTiming(scale.cardPress, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
           withSpring(1, spring.card),
         );
+    // The card itself gives once and settles. One physical accent reads as
+    // precise; a repeated wobble reads as jank.
+    punch.value = reduced
+      ? 1
+      : withSequence(
+          withTiming(scale.cardComplete, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
+          withSpring(1, spring.punch),
+        );
+    // The border and surface tint cross-fade to the success colour and
+    // back, which is what makes a completed card read as *changed* rather
+    // than merely relabelled.
+    tint.value = reduced
+      ? 0
+      : withSequence(
+          withTiming(1, { duration: duration.standard, easing: Easing.out(Easing.cubic) }),
+          withDelay(560, withTiming(0, { duration: duration.celebration, easing: Easing.inOut(Easing.cubic) })),
+        );
     checkProgress.value = reduced
       ? 1
       : withSequence(
-          withTiming(1.18, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
-          withSpring(1, spring.celebration),
+          withTiming(1.24, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
+          withSpring(1, spring.punch),
         );
     xpOpacity.value = reduced
       ? withDelay(180, withSequence(withTiming(1, { duration: duration.reducedMotion }), withDelay(180, withTiming(0, { duration: duration.reducedMotion }))))
-      : withDelay(180, withSequence(withTiming(1, { duration: duration.micro }), withDelay(180, withTiming(0, { duration: duration.standard }))));
-    xpOffset.value = reduced ? 0 : withDelay(180, withTiming(-28, { duration: duration.standard, easing: Easing.out(Easing.cubic) }));
-  }, [checkProgress, completed, pressProgress, reduced, xpOffset, xpOpacity]);
+      : withDelay(180, withSequence(withTiming(1, { duration: duration.micro }), withDelay(420, withTiming(0, { duration: duration.standard }))));
+    xpOffset.value = reduced ? 0 : withDelay(180, withTiming(-32, { duration: duration.standard, easing: Easing.out(Easing.cubic) }));
+  }, [checkProgress, completed, pressProgress, punch, reduced, tint, xpOffset, xpOpacity]);
 
   const cardStyle = useAnimatedStyle(() => ({
-    transform: reduced ? [] : [{ scale: pressProgress.value }],
+    transform: reduced ? [] : [{ scale: pressProgress.value * punch.value }],
+  }));
+  const cardTintStyle = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(
+      tint.value,
+      [0, 1],
+      [colors.surface, `${colors.success}14`],
+    ),
+    borderColor: interpolateColor(
+      tint.value,
+      [0, 1],
+      [colors.borderSubtle, `${colors.success}CC`],
+    ),
   }));
   const haloStyle = useAnimatedStyle(() => ({
     opacity: halo.value,
@@ -607,16 +672,24 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
         ]}
       />
       <Animated.View
-      style={[
-        styles.questCard,
-        {
-          backgroundColor: completed ? `${colors.success}0D` : colors.surface,
-          borderColor: completed ? `${colors.success}80` : colors.borderSubtle,
-          borderRadius: radius.lg,
-        },
-        cardStyle,
-      ]}
-    >
+        style={[
+          styles.questCard,
+          // A completed card keeps its success tint, but the first ~800ms
+          // are driven by `cardTintStyle` so the change is animated rather
+          // than a repaint. The static value is the resting state.
+          completed
+            ? { backgroundColor: `${colors.success}0D`, borderColor: `${colors.success}80` }
+            : { backgroundColor: colors.surface, borderColor: colors.borderSubtle },
+          cardTintStyle,
+          { borderRadius: radius.lg },
+          cardStyle,
+        ]}
+      >
+        <CompletionBurst
+          active={completed}
+          xp={quest.xp_reward}
+          accent={colors.accent}
+        />
       <Animated.View pointerEvents="none" style={[styles.xpBurst, xpStyle]}>
         <Text style={[styles.xpBurstText, { color: colors.accent }]}>+{quest.xp_reward} XP</Text>
       </Animated.View>
@@ -666,7 +739,12 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
           onPressOut={handleCardPressOut}
           style={[
             styles.detailsButton,
-            { borderColor: colors.border, borderRadius: radius.sm, opacity: disabled ? 0.6 : 1 },
+            {
+              backgroundColor: colors.surfaceElevated,
+              borderColor: colors.border,
+              borderRadius: radius.sm,
+              opacity: disabled ? 0.6 : 1,
+            },
           ]}
         >
           <LucideIcon name="maximize-2" size={16} color={colors.textSecondary} />
@@ -830,9 +908,11 @@ const styles = StyleSheet.create({
   titleCopy: { flex: 1, minWidth: 0 },
   title: { fontSize: 27, lineHeight: 34 },
   subtitle: { marginTop: 2 },
-  countBadge: { minWidth: 66, height: 52, borderWidth: 1, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  countValue: { fontSize: 18, lineHeight: 22 },
-  countLabel: { fontSize: 10, lineHeight: 13 },
+  // Two lines inside a fixed-height badge clipped the second one on the
+  // device. minHeight plus a real line box fixes it without a magic number.
+  countBadge: { minWidth: 70, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  countValue: { fontSize: 18, lineHeight: 22, fontVariant: ['tabular-nums'] },
+  countLabel: { fontSize: 10, lineHeight: 14, marginTop: 1 },
   filters: { gap: 8, paddingTop: 14, paddingRight: 16, paddingLeft: 4 },
   filterHit: { height: 40, paddingHorizontal: 15, alignItems: 'center', justifyContent: 'center' },
   filterPill: { position: 'absolute', top: 14, left: 0, height: 40, borderRadius: 20, borderWidth: 1 },
@@ -869,8 +949,12 @@ const styles = StyleSheet.create({
   rewardValue: { fontSize: 16, lineHeight: 20 },
   rewardLabel: { fontSize: 10, lineHeight: 13 },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
+  // `colors.border` on `colors.surface` measured under 3:1 on the device,
+  // so the button read as plain text. The fill and the brighter border are
+  // applied inline, next to the label, so the pairing is visible in one
+  // place.
   detailsButton: { minHeight: 42, paddingHorizontal: 13, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  detailsLabel: { fontSize: 12, lineHeight: 16 },
+  detailsLabel: { fontSize: 12, lineHeight: 16, fontWeight: '700' },
   completeButton: { minWidth: 118, minHeight: 42, flex: 1, alignItems: 'center', justifyContent: 'center' },
   completeContent: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   completeLabel: { fontFamily: 'Nunito', fontSize: 13, lineHeight: 17, fontWeight: '800' },
@@ -882,4 +966,7 @@ const styles = StyleSheet.create({
   addHolder: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
   addButton: { width: 46, height: 46, borderWidth: 1, alignItems: 'center', justifyContent: 'center', overflow: 'visible' },
   addGlow: { position: 'absolute', width: 46, height: 46, borderRadius: 23, opacity: 0.3 },
+  archivedRow: { flexDirection: 'row', alignItems: 'center', gap: 11, borderWidth: 1, padding: 13, marginTop: 4 },
+  archivedIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  archivedCopy: { flex: 1, minWidth: 0 },
 });

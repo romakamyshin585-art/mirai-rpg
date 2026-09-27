@@ -55,7 +55,7 @@ type AchievementsScreenProps = {
   onDataChanged?: () => void;
 };
 
-const APP_VERSION = '0.3.1';
+const APP_VERSION = '0.4.0';
 
 export function AchievementsScreen({ ctx, revision, celebrationCodes, onDataChanged }: AchievementsScreenProps) {
   const { colors, typographyStylesheet: typography } = useTheme();
@@ -476,9 +476,11 @@ const styles = StyleSheet.create({
   heading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 28, lineHeight: 34 },
   subtitle: { marginTop: 2 },
-  progressBadge: { minWidth: 68, height: 54, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  progressValue: { fontSize: 18, lineHeight: 22 },
-  progressLabel: { fontSize: 10, lineHeight: 13 },
+  // Same clipping as the quest count badge: the fixed height was smaller
+  // than value line + label line + padding.
+  progressBadge: { minWidth: 72, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  progressValue: { fontSize: 18, lineHeight: 22, fontVariant: ['tabular-nums'] },
+  progressLabel: { fontSize: 10, lineHeight: 14, marginTop: 1 },
   summary: { minHeight: 76, borderWidth: 1, borderRadius: 18, padding: 14 },
   summaryCopy: { marginBottom: 10 },
   summaryTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },

@@ -89,6 +89,32 @@ export class QuestRepo {
     );
   }
 
+  /**
+   * The user's own archived quests.
+   *
+   * Archiving is a soft delete, so nothing is ever really lost — but until
+   * this existed there was no way back. With 226 quests in the catalogue
+   * the "x" on every card is one stray tap from emptying the list, and a
+   * mistake could only be undone by reinstalling the app.
+   */
+  async listArchivedForUser(userId: string): Promise<QuestRow[]> {
+    return this.db.all<QuestRow>(
+      `SELECT id, user_id, title, description, category, difficulty, xp_reward, is_system, is_active, created_at
+       FROM quest
+       WHERE is_active = 0 AND user_id = ?
+       ORDER BY category, difficulty, title`,
+      [userId],
+    );
+  }
+
+  async countArchivedForUser(userId: string): Promise<number> {
+    const row = await this.db.one<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM quest WHERE is_active = 0 AND user_id = ?`,
+      [userId],
+    );
+    return row?.cnt ?? 0;
+  }
+
   async insert(row: Omit<QuestRow, 'id' | 'created_at'>): Promise<QuestRow> {
     const r: QuestRow = { ...row, id: uuid(), created_at: nowIso() };
     await this.db.exec(

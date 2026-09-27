@@ -51,6 +51,10 @@ function AppContent() {
   const [retryCount, setRetryCount] = useState(0);
   const { colors } = useTheme();
   const { trigger: triggerHaptic } = useHaptics();
+  // A bottom sheet owns the lower half of the screen, and the toast was
+  // landing on top of its list. When a panel is open the toast moves to the
+  // top instead of fighting it for the same pixels.
+  const overlayOpen = useOverlayActivity();
   const [fontsLoaded, fontError] = useNunitoFonts();
 
   useEffect(() => {
@@ -231,7 +235,8 @@ function AppContent() {
           actionLabel={toast?.actionLabel}
           onAction={toast?.onAction}
           onHide={hideToast}
-          bottomOffset={BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 12}
+          bottomOffset={overlayOpen ? undefined : BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 12}
+          top={overlayOpen ? insets.top + 12 : undefined}
         />
         <CelebrationOverlay
           visible={celebration !== null}

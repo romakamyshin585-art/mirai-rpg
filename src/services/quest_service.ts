@@ -99,6 +99,15 @@ export class QuestService {
     this.invalidateCatalogue();
   }
 
+  /** The user's own hidden quests, newest category first. */
+  listArchived(userId: string) {
+    return this.q.listArchivedForUser(userId);
+  }
+
+  countArchived(userId: string) {
+    return this.q.countArchivedForUser(userId);
+  }
+
   async getTodayProgress(userId: string): Promise<TodayProgress> {
     const today = dayKey(new Date());
     // SQL aggregates with local-day range semantics — no listRecent() LIMIT dependency,
