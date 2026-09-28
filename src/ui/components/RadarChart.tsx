@@ -147,10 +147,22 @@ export function RadarChart({ data, onSelect, selected = null }: RadarChartProps)
     opacity: reveal.value,
     transform: reduced ? [] : [{ scale: 0.96 + reveal.value * 0.04 }],
   }));
-  const outerAnimatedProps = useAnimatedProps(() => ({
+  // One `useAnimatedProps` per animated element, never one shared between
+  // several. Reanimated binds an `animatedProps` result to the view of the
+  // component that received it; handing the same object to three paths
+  // points all three updaters at one view tag, so two of the shapes either
+  // animate nothing or write to a view that is not theirs — the same class
+  // of "no host instance" failure the crystal mark had.
+  const outerFillProps = useAnimatedProps(() => ({
     d: interpolatePath(fromPoints.value, toPoints.value, transition.value, center, 1),
   }));
-  const innerAnimatedProps = useAnimatedProps(() => ({
+  const outerCoreProps = useAnimatedProps(() => ({
+    d: interpolatePath(fromPoints.value, toPoints.value, transition.value, center, 1),
+  }));
+  const outerStrokeProps = useAnimatedProps(() => ({
+    d: interpolatePath(fromPoints.value, toPoints.value, transition.value, center, 1),
+  }));
+  const innerProps = useAnimatedProps(() => ({
     d: interpolatePath(fromPoints.value, toPoints.value, transition.value, center, 0.52),
   }));
 
@@ -243,10 +255,10 @@ export function RadarChart({ data, onSelect, selected = null }: RadarChartProps)
                   );
                 })}
               </G>
-              <AnimatedPath animatedProps={outerAnimatedProps} d={polygonPath(flatPoints, center, 1)} fill="url(#radarGradient)" opacity={0.8} />
-              <AnimatedPath animatedProps={outerAnimatedProps} d={polygonPath(flatPoints, center, 1)} fill="url(#radarCore)" opacity={0.66} />
+              <AnimatedPath animatedProps={outerFillProps} d={polygonPath(flatPoints, center, 1)} fill="url(#radarGradient)" opacity={0.8} />
+              <AnimatedPath animatedProps={outerCoreProps} d={polygonPath(flatPoints, center, 1)} fill="url(#radarCore)" opacity={0.66} />
               <AnimatedPath
-                animatedProps={outerAnimatedProps}
+                animatedProps={outerStrokeProps}
                 d={polygonPath(flatPoints, center, 1)}
                 fill="none"
                 stroke="#C4B5FD"
@@ -255,7 +267,7 @@ export function RadarChart({ data, onSelect, selected = null }: RadarChartProps)
                 strokeLinejoin="round"
               />
               <AnimatedPath
-                animatedProps={innerAnimatedProps}
+                animatedProps={innerProps}
                 d={polygonPath(flatPoints, center, 0.52)}
                 fill="#2563EB"
                 fillOpacity={0.2}
@@ -481,14 +493,20 @@ function RadarVertex({
   color: string;
   backgroundColor: string;
 }) {
-  const animatedProps = useAnimatedProps(() => ({
+  // Separate hooks for the halo and the dot - see the note in RadarChart about
+  // never sharing one `animatedProps` result between two elements.
+  const haloProps = useAnimatedProps(() => ({
+    cx: interpolatePoint(fromPoints.value, toPoints.value, progress.value, index, 'x'),
+    cy: interpolatePoint(fromPoints.value, toPoints.value, progress.value, index, 'y'),
+  }));
+  const dotProps = useAnimatedProps(() => ({
     cx: interpolatePoint(fromPoints.value, toPoints.value, progress.value, index, 'x'),
     cy: interpolatePoint(fromPoints.value, toPoints.value, progress.value, index, 'y'),
   }));
   return (
     <G>
-      <AnimatedCircle animatedProps={animatedProps} r={11} fill={color} fillOpacity={0.16} />
-      <AnimatedCircle animatedProps={animatedProps} r={4.5} fill={color} stroke={backgroundColor} strokeWidth={1.5} />
+      <AnimatedCircle animatedProps={haloProps} r={11} fill={color} fillOpacity={0.16} />
+      <AnimatedCircle animatedProps={dotProps} r={4.5} fill={color} stroke={backgroundColor} strokeWidth={1.5} />
     </G>
   );
 }

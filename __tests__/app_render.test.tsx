@@ -29,6 +29,12 @@ import { ThemeProvider } from '../src/ui/theme';
 import React, { useState } from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
 
+// These mount the real app tree and drive it, which is orders of magnitude
+// slower than the domain suites next to them. Under jest's parallel workers
+// the 5s default is not enough and the suite fails for reasons that have
+// nothing to do with the code under test.
+jest.setTimeout(120_000);
+
 jest.mock('react-native-reanimated', () => {
   const RN = require('react-native');
   const passthrough = (t: number) => t;

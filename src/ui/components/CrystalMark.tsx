@@ -19,10 +19,27 @@
  * ## Cost discipline
  *
  * The spin is faked with `scaleX`, i.e. it is a 2D transform, not a 3D
- * renderer. The specular sweep is a translating gradient, not a shader.
- * Both run on the UI thread via Reanimated, and the ambient loop pauses
- * when the app is backgrounded — a perpetual `withRepeat` behind a lock
- * screen is a measurable battery cost for an animation nobody sees.
+ * renderer. The specular sweep is a gradient, not a shader. Both run on
+ * the UI thread via Reanimated, and the ambient loop pauses when the app
+ * is backgrounded — a perpetual `withRepeat` behind a lock screen is a
+ * measurable battery cost for an animation nobody sees.
+ *
+ * ## What may and may not carry `animatedProps`
+ *
+ * A gradient `<Stop>` is not a native view: it is a property of the
+ * gradient it belongs to, and it never gets a view tag. Reanimated
+ * resolves the host instance for every `animatedProps` target, so hanging
+ * one on a `<Stop>` makes it throw
+ *
+ *   [Reanimated] Cannot find host instance for this component.
+ *   Maybe it renders nothing?
+ *
+ * on mount — deterministically, not as a race. That is what took the
+ * Home tab down: the loading state mounts this mark, so every cold start
+ * did it. `RNSVGPath` (which `Polygon` compiles to) *is* a real view, so
+ * the moving parts are attached to the shapes that use the gradients
+ * instead. The rule to keep: only `Polygon`, `Path`, `Circle`, `Rect` and
+ * friends may receive `animatedProps`; nothing inside `<Defs>` may.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -43,7 +60,6 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Defs, LinearGradient, Line, Polygon, RadialGradient, Stop, Svg } from 'react-native-svg';
 
-const AnimatedStop = Animated.createAnimatedComponent(Stop);
 const AnimatedPolygon = Animated.createAnimatedComponent(Polygon);
 import { useTheme } from '../theme';
 import { duration, spring, useReducedMotion } from '../motion';
@@ -177,23 +193,27 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
         ],
   }));
 
-  // The sheen is a three-stop gradient whose bright band slides across the
-  // crystal. Animating the stops is the only way to keep a single SVG
-  // document; translating a nested <Svg> cannot.
-  const sheenProps = useAnimatedProps(() => {
+  // The sheen is a three-stop gradient whose bright band used to slide across
+  // the crystal by animating a stop's `offset`. A stop has no host instance,
+  // so that is the shape the crash took: Reanimated could not resolve a view
+  // to write to. Both moving parts are therefore attached to the polygons
+  // that *use* the gradients — `Polygon` compiles to `RNSVGPath`, which is a
+  // real view. The band is static now and the highlight breathes through the
+  // shape's `fillOpacity` along the same value, which reads the same at this
+  // size and costs one mapper instead of three.
+  const coreShapeProps = useAnimatedProps(() => {
     'worklet';
-    const t = animated && !reduced ? sheen.value : 0.5;
-    return { offset: `${(t * 140 - 30).toFixed(2)}%` };
+    return { fillOpacity: (0.15 + core.value * 0.8).toFixed(3) };
   });
 
-  const coreStopProps = useAnimatedProps(() => {
+  const sheenShapeProps = useAnimatedProps(() => {
     'worklet';
-    return { stopOpacity: (0.15 + core.value * 0.8).toFixed(3) };
-  });
-
-  const sheenPolygonProps = useAnimatedProps(() => {
-    'worklet';
-    return { opacity: (animated && !reduced ? 1 : 0.55).toFixed(3) };
+    const live = animated && !reduced;
+    const t = live ? sheen.value : 0.5;
+    // Triangular envelope: up through the middle of the loop and back down,
+    // so the highlight arrives and leaves instead of blinking.
+    const band = Math.max(0, 1 - Math.abs(t * 2 - 1));
+    return { fillOpacity: (band * (live ? 1 : 0.55)).toFixed(3) };
   });
 
   const facets = useMemo(
@@ -244,14 +264,9 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
       <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <Defs>
           <LinearGradient id="crystalSheen" gradientUnits="userSpaceOnUse" x1={0} y1={0} x2={size * 0.4} y2={size}>
-            <AnimatedStop
-              animatedProps={sheenProps}
-              offset="0%"
-              stopColor="#FFFFFF"
-              stopOpacity={0}
-            />
-            <AnimatedStop offset="18%" stopColor="#FFFFFF" stopOpacity={0.5} />
-            <AnimatedStop offset="34%" stopColor="#FFFFFF" stopOpacity={0} />
+            <Stop offset="0%" stopColor="#FFFFFF" stopOpacity={0} />
+            <Stop offset="18%" stopColor="#FFFFFF" stopOpacity={0.5} />
+            <Stop offset="34%" stopColor="#FFFFFF" stopOpacity={0} />
           </LinearGradient>
           <RadialGradient
             id="crystalCore"
@@ -260,14 +275,9 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
             cy={size / 2 - size * 0.0085}
             r={size * 0.16}
           >
-            <AnimatedStop
-              animatedProps={coreStopProps}
-              offset="0%"
-              stopColor={colors.accent}
-              stopOpacity={0.95}
-            />
-            <AnimatedStop offset="55%" stopColor={colors.accent} stopOpacity={0.34} />
-            <AnimatedStop offset="100%" stopColor={colors.accent} stopOpacity={0} />
+            <Stop offset="0%" stopColor={colors.accent} stopOpacity={0.95} />
+            <Stop offset="55%" stopColor={colors.accent} stopOpacity={0.34} />
+            <Stop offset="100%" stopColor={colors.accent} stopOpacity={0} />
           </RadialGradient>
         </Defs>
 
@@ -289,8 +299,8 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
         ))}
 
         <Polygon points={outline} fill="none" stroke={colors.catKnowledge} strokeOpacity={0.55} strokeWidth={1.4} strokeLinejoin="round" />
-        <Polygon points={outline} fill="url(#crystalCore)" />
-        <AnimatedPolygon animatedProps={sheenPolygonProps} points={outline} fill="url(#crystalSheen)" />
+        <AnimatedPolygon animatedProps={coreShapeProps} points={outline} fill="url(#crystalCore)" />
+        <AnimatedPolygon animatedProps={sheenShapeProps} points={outline} fill="url(#crystalSheen)" />
       </Svg>
     </Animated.View>
   );
