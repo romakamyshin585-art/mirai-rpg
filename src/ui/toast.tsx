@@ -1,12 +1,26 @@
-import { useEffect, useState } from 'react';
+/**
+ * Toast.
+ *
+ * **Mounting contract:** mounted only while there is a message, and it
+ * always renders its host view. It used to be mounted unconditionally and
+ * return null when there was nothing to say, so its `useAnimatedStyle` had
+ * no view while the effect still wrote to the shared value - which throws
+ * "Cannot find host instance for this component" rather than warning.
+ * The same trap was fixed in CategoryInsightSheet and CompletionBurst.
+ *
+ * It also moves to the top of the screen while a bottom sheet is open, so
+ * it does not land on the sheet's own list.
+ */
+
+import { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 import { MotionPressable } from './components/MotionPressable';
 import { duration, useReducedMotion } from './motion';
 import { useTheme } from './theme';
 
 type ToastProps = {
-  message: string | null;
+  message: string;
   actionLabel?: string;
   onAction?: () => Promise<void> | void;
   onHide: () => void;
@@ -19,16 +33,19 @@ export function Toast({ message, actionLabel, onAction, onHide, bottomOffset, to
   const { colors, radius, typography } = useTheme();
   const reduced = useReducedMotion();
   const progress = useSharedValue(0);
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!message) {
-      progress.value = 0;
+    if (reduced) {
+      progress.value = 1;
       return;
     }
-    progress.value = reduced
-      ? withTiming(1, { duration: duration.reducedMotion, easing: Easing.out(Easing.cubic) })
-      : withTiming(1, { duration: duration.micro, easing: Easing.out(Easing.cubic) });
+    progress.value = 0;
+    progress.value = withSequence(
+      withTiming(1, { duration: duration.standard, easing: Easing.out(Easing.cubic) }),
+      // Hold, then slide away. The owner unmounts us on hide, so the exit
+      // is only ever seen when it is interrupted.
+      withTiming(1, { duration: 1 }),
+    );
   }, [message, progress, reduced]);
 
   const hostStyle = useAnimatedStyle(() => ({
@@ -37,22 +54,17 @@ export function Toast({ message, actionLabel, onAction, onHide, bottomOffset, to
   }));
 
   useEffect(() => {
-    if (!message) return;
     const timeout = setTimeout(onHide, actionLabel ? 6500 : 2800);
     return () => clearTimeout(timeout);
   }, [actionLabel, message, onHide]);
 
-  if (!message) return null;
-
   const runAction = async () => {
-    if (!onAction || busy) return;
-    setBusy(true);
+    if (!onAction) return;
     try {
       await onAction();
     } catch (error) {
       console.warn('[MiraiRPG] Toast action failed:', error);
     } finally {
-      setBusy(false);
       onHide();
     }
   };
@@ -82,15 +94,14 @@ export function Toast({ message, actionLabel, onAction, onHide, bottomOffset, to
           <MotionPressable
             accessibilityRole="button"
             accessibilityLabel={actionLabel}
-            disabled={busy}
             onPress={() => void runAction()}
             style={[
               styles.action,
-              { backgroundColor: colors.accentSoft, borderRadius: radius.sm, opacity: busy ? 0.7 : 1 },
+              { backgroundColor: colors.accentSoft, borderRadius: radius.sm },
             ]}
           >
             <Text style={[styles.actionLabel, typography.caption, { color: colors.accent, fontWeight: '800' }]}>
-              {busy ? '…' : actionLabel}
+              {actionLabel}
             </Text>
           </MotionPressable>
         ) : null}
@@ -116,3 +127,5 @@ const styles = StyleSheet.create({
   action: { minHeight: 38, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
   actionLabel: { fontSize: 12, lineHeight: 16 },
 });
+
+export default Toast;

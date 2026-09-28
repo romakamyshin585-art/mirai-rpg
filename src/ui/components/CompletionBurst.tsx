@@ -41,13 +41,23 @@ import { duration, spring, useReducedMotion } from '../motion';
 const SPARK_COUNT = 8;
 const RING_TRAVEL = 132;
 
+/**
+ * **Mounting contract:** the burst is mounted only while it plays, and it
+ * always renders. It used to take an `active` prop and `return null` when
+ * false - which means its `useAnimatedStyle` had no view, and the reset
+ * branch of the effect wrote to the shared values anyway:
+ *
+ *   [Reanimated] Cannot find host instance for this component.
+ *   Maybe it renders nothing?
+ *
+ * That throws rather than warns. The call site mounts it for the length of
+ * the animation and unmounts it after.
+ */
 export function CompletionBurst({
-  active,
   xp,
   radius = 26,
   accent,
 }: {
-  active: boolean;
   xp: number;
   radius?: number;
   accent: string;
@@ -62,20 +72,6 @@ export function CompletionBurst({
   const tint = useSharedValue(0);
 
   useEffect(() => {
-    if (!active) {
-      cancelAnimation(ring);
-      cancelAnimation(sparks);
-      cancelAnimation(xpProgress);
-      cancelAnimation(check);
-      cancelAnimation(tint);
-      ring.value = 0;
-      sparks.value = 0;
-      xpProgress.value = 0;
-      check.value = 0;
-      tint.value = 0;
-      return;
-    }
-
     if (reduced) {
       // Reduce Motion keeps the information and drops the spectacle: the
       // check and the XP number simply appear.
@@ -104,7 +100,16 @@ export function CompletionBurst({
       withTiming(1, { duration: duration.standard, easing: Easing.out(Easing.cubic) }),
       withDelay(520, withTiming(0, { duration: duration.celebration, easing: Easing.inOut(Easing.cubic) })),
     );
-  }, [active, check, reduced, ring, sparks, tint, xpProgress]);
+
+    // Leave nothing running after the component goes away.
+    return () => {
+      cancelAnimation(ring);
+      cancelAnimation(sparks);
+      cancelAnimation(xpProgress);
+      cancelAnimation(check);
+      cancelAnimation(tint);
+    };
+  }, [check, reduced, ring, sparks, tint, xpProgress]);
 
   const ringStyle = useAnimatedStyle(() => ({
     opacity: interpolate(ring.value, [0, 0.12, 1], [0, 0.55, 0], Extrapolate.CLAMP),
@@ -136,8 +141,6 @@ export function CompletionBurst({
     () => Array.from({ length: SPARK_COUNT }, (_, index) => (360 / SPARK_COUNT) * index + 22.5),
     [],
   );
-
-  if (!active) return null;
 
   return (
     <View pointerEvents="none" style={styles.root}>

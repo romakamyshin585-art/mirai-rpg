@@ -230,14 +230,18 @@ function AppContent() {
           </ScreenBoundary>
         </ScreenTransition>
         <BottomTab tab={tab} onChange={changeTab} />
-        <Toast
-          message={toast?.message ?? null}
-          actionLabel={toast?.actionLabel}
-          onAction={toast?.onAction}
-          onHide={hideToast}
-          bottomOffset={overlayOpen ? undefined : BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 12}
-          top={overlayOpen ? insets.top + 12 : undefined}
-        />
+        {/* Mounted only when there is something to say - see the mounting
+            contract in toast.tsx. */}
+        {toast ? (
+          <Toast
+            message={toast.message}
+            actionLabel={toast.actionLabel}
+            onAction={toast.onAction}
+            onHide={hideToast}
+            bottomOffset={overlayOpen ? undefined : BOTTOM_NAV_BASE_HEIGHT + insets.bottom + 12}
+            top={overlayOpen ? insets.top + 12 : undefined}
+          />
+        ) : null}
         <CelebrationOverlay
           visible={celebration !== null}
           title={celebration?.title ?? ''}

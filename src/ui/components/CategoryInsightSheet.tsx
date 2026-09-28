@@ -34,23 +34,36 @@ export type AxisInsight = {
 };
 
 export type CategoryInsightSheetProps = {
-  category: Category | null;
+  /** Always a real category: the sheet is mounted only when one is open. */
+  category: Category;
   insights: Record<Category, AxisInsight>;
   onClose: () => void;
   /** "Все квесты" — jump to the quest list filtered by this axis. */
   onOpenQuests?: (category: Category) => void;
 };
 
+/**
+ * Per-axis breakdown, opened from a radar pod.
+ *
+ * **Mounting contract:** this component is mounted only while an axis is
+ * open, and it always renders its sheet. It used to be mounted
+ * unconditionally and return early with an `Overlay visible={false}`,
+ * which renders nothing - and a `useAnimatedStyle` whose view is not in the
+ * tree blows up the moment the effect writes to the shared value:
+ *
+ *   [Reanimated] Cannot find host instance for this component.
+ *   Maybe it renders nothing?
+ *
+ * That is not a warning, it throws, and Home is where the sheet lives, so
+ * it took the whole tab down. The same trap is avoided in Toast and
+ * CompletionBurst.
+ */
 export function CategoryInsightSheet({ category, insights, onClose, onOpenQuests }: CategoryInsightSheetProps) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const reduced = useReducedMotion();
   const entrance = useSharedValue(0);
 
   useEffect(() => {
-    if (!category) {
-      entrance.value = withTiming(0, { duration: duration.micro });
-      return;
-    }
     entrance.value = reduced
       ? withTiming(1, { duration: duration.reducedMotion })
       : withSpring(1, spring.sheet);
@@ -67,10 +80,6 @@ export function CategoryInsightSheet({ category, insights, onClose, onOpenQuests
     opacity: entrance.value,
     transform: reduced ? [] : [{ translateY: (1 - entrance.value) * 40 }, { scale: 0.97 + entrance.value * 0.03 }],
   }));
-
-  if (!category) {
-    return <Overlay visible={false} onClose={onClose}>{null}</Overlay>;
-  }
 
   const item = insights[category] ?? { xp: 0, questsCompleted: 0, weeklyXp: 0 };
   const color = colors[`cat${category.charAt(0).toUpperCase()}${category.slice(1)}` as keyof typeof colors];

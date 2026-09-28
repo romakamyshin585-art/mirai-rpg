@@ -740,16 +740,20 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
       ) : null}
     </Animated.ScrollView>
 
-    <CategoryInsightSheet
-      category={axisSheet}
-      insights={axisInsights}
-      onClose={() => setAxisSheet(null)}
-      onOpenQuests={category => {
-        setAxisSheet(null);
-        if (onOpenQuestsForCategory) onOpenQuestsForCategory(category);
-        else onOpenQuests();
-      }}
-    />
+    {/* Mounted only while an axis is open, and never rendered empty - see
+        the mounting contract on CategoryInsightSheet. */}
+    {axisSheet ? (
+      <CategoryInsightSheet
+        category={axisSheet}
+        insights={axisInsights}
+        onClose={() => setAxisSheet(null)}
+        onOpenQuests={category => {
+          setAxisSheet(null);
+          if (onOpenQuestsForCategory) onOpenQuestsForCategory(category);
+          else onOpenQuests();
+        }}
+      />
+    ) : null}
     </>
   );
 }

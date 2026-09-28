@@ -691,11 +691,9 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
           cardStyle,
         ]}
       >
-        <CompletionBurst
-          active={burstActive}
-          xp={quest.xp_reward}
-          accent={colors.accent}
-        />
+        {burstActive ? (
+          <CompletionBurst xp={quest.xp_reward} accent={colors.accent} />
+        ) : null}
       <View style={styles.questTop}>
         <View style={[styles.categoryIcon, { backgroundColor: `${categoryColor}20` }]}>
           <LucideIcon name={CATEGORY_ICONS[quest.category]} size={21} color={categoryColor} />
