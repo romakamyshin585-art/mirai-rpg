@@ -195,7 +195,13 @@ export function Overlay({
       setMounted(true);
       progress.value = reduced
         ? withTiming(1, { duration: duration.reducedMotion, easing: Easing.out(Easing.cubic) })
-        : withSpring(1, spring.sheet);
+        // A timing curve for centre panels rather than a spring: the
+        // panel has a fixed travel distance and needs a known duration so
+        // the backdrop and the content stay in step. Bottom sheets keep
+        // the spring, where the drag release is the point.
+        : align === 'center' && !morphOrigin
+          ? withTiming(1, { duration: duration.major, easing: Easing.out(Easing.cubic) })
+          : withSpring(1, spring.sheet);
       dragY.value = 0;
       return;
     }
@@ -259,9 +265,17 @@ export function Overlay({
         transform: [{ translateY: interpolate(p, [0, 1], [360, 0], Extrapolate.CLAMP) + dragY.value }],
       };
     }
+    // Centre panels. The scale used to start at 0.94 and land instantly,
+    // which read as a snap: a panel that grows has to begin below the
+    // pointer rather than in place. The two-stage curve below spends most
+    // of its time in the middle of the range, so the panel appears to
+    // travel a short distance and settle instead of popping.
     return {
-      opacity: p,
-      transform: [{ scale: interpolate(p, [0, 1], [0.94, 1], Extrapolate.CLAMP) }],
+      opacity: interpolate(p, [0, 0.35, 1], [0, 1, 1], Extrapolate.CLAMP),
+      transform: [
+        { translateY: interpolate(p, [0, 1], [26, 0], Extrapolate.CLAMP) },
+        { scale: interpolate(p, [0, 1], [0.9, 1], Extrapolate.CLAMP) },
+      ],
     };
   });
 

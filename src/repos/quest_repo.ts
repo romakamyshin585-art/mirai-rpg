@@ -115,6 +115,37 @@ export class QuestRepo {
     return row?.cnt ?? 0;
   }
 
+  /**
+   * Hard delete, and it is deliberately honest about the cost.
+   *
+   * `quest_completion.quest_id` is declared `ON DELETE CASCADE`, so
+   * removing the quest also removes every completion that referenced it —
+   * the calendar entry, the streak input and the DR counter all go with it.
+   * The `stat` totals are *not* rolled back (they live on the character and
+   * are only ever incremented), so the XP stays on the radar while the day
+   * disappears from the history. That asymmetry is the caller's to warn
+   * about, and the UI does.
+   *
+   * Returns the number of completions that went with it, so the caller can
+   * state the consequence instead of guessing.
+   */
+  async hardDeleteForUser(id: string, userId: string): Promise<{ completionsRemoved: number }> {
+    const row = await this.db.one<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM quest_completion WHERE quest_id = ?`,
+      [id],
+    );
+    await this.db.exec(`DELETE FROM quest WHERE id = ? AND user_id = ?`, [id, userId]);
+    return { completionsRemoved: row?.cnt ?? 0 };
+  }
+
+  async countCompletionsForQuest(id: string): Promise<number> {
+    const row = await this.db.one<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM quest_completion WHERE quest_id = ?`,
+      [id],
+    );
+    return row?.cnt ?? 0;
+  }
+
   async insert(row: Omit<QuestRow, 'id' | 'created_at'>): Promise<QuestRow> {
     const r: QuestRow = { ...row, id: uuid(), created_at: nowIso() };
     await this.db.exec(
@@ -127,6 +158,39 @@ export class QuestRepo {
 
   async setActive(id: string, active: boolean): Promise<void> {
     await this.db.exec(`UPDATE quest SET is_active = ? WHERE id = ?`, [active ? 1 : 0, id]);
+  }
+
+  /**
+   * Edit a quest the user owns.
+   *
+   * Two invariants are enforced in SQL rather than trusted to the caller,
+   * because this is exactly the kind of write a future screen could get
+   * wrong:
+   *
+   *  - `is_system = 0` and the owner has to match, so no system quest and
+   *    no other user's quest is ever touched;
+   *  - **`xp_reward` is not in the update list at all.** The reward is
+   *    decided when the quest is created and stays that way, so editing
+   *    cannot become a way to turn a 10 XP task into a 70 XP one.
+   */
+  async updateOwned(
+    id: string,
+    userId: string,
+    fields: { title: string; description: string | null; category: Category; difficulty: number },
+  ): Promise<boolean> {
+    // Ownership is checked first and separately: `exec` reports no row
+    // count, so the UPDATE alone cannot tell "updated" from "no such
+    // quest, or not yours".
+    const owned = await this.db.one<{ id: string }>(
+      `SELECT id FROM quest WHERE id = ? AND user_id = ? AND is_system = 0`,
+      [id, userId],
+    );
+    if (!owned) return false;
+    await this.db.exec(
+      `UPDATE quest SET title = ?, description = ?, category = ?, difficulty = ? WHERE id = ?`,
+      [fields.title, fields.description, fields.category, fields.difficulty, id],
+    );
+    return true;
   }
 }
 

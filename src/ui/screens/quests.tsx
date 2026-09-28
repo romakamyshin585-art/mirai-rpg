@@ -17,6 +17,7 @@ import { MotionProgressBar } from '../components/MotionProgressBar';
 import { QuestSearchField } from '../components/QuestSearchField';
 import { CompletionBurst } from '../components/CompletionBurst';
 import { ArchivedQuestsSheet } from '../components/ArchivedQuestsSheet';
+import { EditQuestSheet } from '../components/EditQuestSheet';
 import { searchQuests } from '../../domain/quest_search';
 
 const CATEGORY_ICONS: Record<Category, string> = {
@@ -87,6 +88,7 @@ export function QuestsScreen({
   const [undoing, setUndoing] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [editing, setEditing] = useState<QuestRow | null>(null);
   const [morphOrigin, setMorphOrigin] = useState<MorphOrigin | undefined>(undefined);
   const [pendingArchive, setPendingArchive] = useState<QuestRow | null>(null);
   // One shared value drives both the add icon and the sheet it opens, so
@@ -331,6 +333,7 @@ export function QuestsScreen({
         void trigger(HAPTIC_EVENTS.modalOpen);
       }}
       onArchive={() => confirmArchive(item)}
+      onEdit={item.is_system === 0 ? () => setEditing(item) : undefined}
     />
   );
 
@@ -510,6 +513,16 @@ export function QuestsScreen({
         morphOrigin={morphOrigin}
         sharedProgress={createProgress}
       />
+      <EditQuestSheet
+        ctx={ctx}
+        questId={editing?.id ?? null}
+        visible={editing !== null}
+        onClose={() => setEditing(null)}
+        onSaved={() => {
+          setEditing(null);
+          onDataChanged();
+        }}
+      />
       <ArchivedQuestsSheet
         ctx={ctx}
         revision={revision}
@@ -551,9 +564,11 @@ type QuestCardProps = {
   onComplete: () => void;
   onOpen: () => void;
   onArchive: () => void;
+  /** Only offered for the user's own quests. */
+  onEdit?: () => void;
 };
 
-function QuestCard({ quest, busy, disabled, completed, highlighted = false, onComplete, onOpen, onArchive }: QuestCardProps) {
+function QuestCard({ quest, busy, disabled, completed, highlighted = false, onComplete, onOpen, onArchive, onEdit }: QuestCardProps) {
   const { colors, radius, typographyStylesheet: typography } = useTheme();
   const reduced = useReducedMotion();
   const categoryColor = colors[`cat${quest.category.charAt(0).toUpperCase()}${quest.category.slice(1)}` as keyof typeof colors];
@@ -702,18 +717,32 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
           <View style={styles.questHeading}>
             <Text numberOfLines={2} style={[styles.questTitle, typography.bodyStrong, { color: colors.text }]}>{quest.title}</Text>
             {quest.is_system === 0 ? (
-              <MotionPressable
-                accessibilityRole="button"
-                accessibilityLabel={`Удалить ${quest.title}`}
-                disabled={disabled}
-                onPress={onArchive}
-                onPressIn={handleCardPressIn}
-                onPressOut={handleCardPressOut}
-                hitSlop={10}
-                style={[styles.archive, { opacity: disabled ? 0.5 : 1 }]}
-              >
-                <LucideIcon name="x" size={17} color={colors.textMuted} />
-              </MotionPressable>
+              <View style={styles.cardActions}>
+                <MotionPressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Редактировать: ${quest.title}`}
+                  disabled={disabled}
+                  onPress={onEdit}
+                  onPressIn={handleCardPressIn}
+                  onPressOut={handleCardPressOut}
+                  hitSlop={8}
+                  style={[styles.edit, { opacity: disabled ? 0.5 : 1 }]}
+                >
+                  <LucideIcon name="pencil" size={16} color={colors.textMuted} />
+                </MotionPressable>
+                <MotionPressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Удалить ${quest.title}`}
+                  disabled={disabled}
+                  onPress={onArchive}
+                  onPressIn={handleCardPressIn}
+                  onPressOut={handleCardPressOut}
+                  hitSlop={8}
+                  style={[styles.archive, { opacity: disabled ? 0.5 : 1 }]}
+                >
+                  <LucideIcon name="x" size={17} color={colors.textMuted} />
+                </MotionPressable>
+              </View>
             ) : null}
           </View>
           {quest.description ? (
@@ -938,7 +967,9 @@ const styles = StyleSheet.create({
   questCopy: { flex: 1, minWidth: 0 },
   questHeading: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
   questTitle: { flex: 1, fontSize: 15, lineHeight: 20 },
-  archive: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
+  archive: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  edit: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  cardActions: { flexDirection: 'row', alignItems: 'center' },
   description: { marginTop: 3 },
   metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 5, marginTop: 6 },
   categoryLabel: { fontWeight: '800' },

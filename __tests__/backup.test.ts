@@ -221,6 +221,45 @@ describe('backup round trip across a simulated reinstall', () => {
     for (const row of rows) expect(targetIds.has(row.achievement_id)).toBe(true);
   });
 
+  test('a renamed own quest still matches its history by id, not by title', async () => {
+    // The id of a user's own quest survives a reinstall because the row is
+    // in the snapshot. Matching those by title would strand the history the
+    // moment the quest is renamed - which the editor now allows.
+    const source = await seedProfile();
+    const created = await new QuestRepo(source.db).insert({
+      user_id: USER,
+      title: 'Черновик',
+      description: null,
+      category: 'career',
+      difficulty: 2,
+      xp_reward: 40,
+      is_system: 0,
+      is_active: 1,
+    });
+    await new ProgressionService(source.db).completeQuest(USER, created.id);
+    await new QuestRepo(source.db).updateOwned(created.id, USER, {
+      title: 'Черновик, исправленный',
+      description: null,
+      category: 'career',
+      difficulty: 2,
+    });
+    const payload = await buildBackup(source.db, USER, '0.4.0');
+
+    const target = await freshMemoryDb();
+    await seedIfEmpty(target);
+    const restored = await restoreBackup(target, payload);
+    expect(restored.orphaned).toBe(0);
+
+    const mine = (await new QuestRepo(target).listForUser(USER)).filter(q => q.is_system === 0);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]?.title).toBe('Черновик, исправленный');
+    // The completion from *before* the rename is still attached to it.
+    const history = await target.all<{ quest_id: string }>(
+      `SELECT quest_id FROM quest_completion WHERE user_id = '${USER}' AND quest_id = '${mine[0]?.id}'`,
+    );
+    expect(history.length).toBeGreaterThan(0);
+  });
+
   test('restore replaces, not merges: pre-existing history is gone', async () => {
     const target = await freshMemoryDb();
     await seedIfEmpty(target);

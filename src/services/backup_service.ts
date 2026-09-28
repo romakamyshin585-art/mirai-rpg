@@ -365,11 +365,13 @@ export async function restoreBackup(db: DbExecutor, payload: BackupPayload): Pro
     // Custom quests keep their ids, so they are inserted first and can
     // serve as resolution targets for the history below.
     const questIdByTitle = new Map<string, string>();
+    const restoredUserQuestIds = new Set<string>();
     for (const row of payload.customQuests) {
       await insertRows(tx, 'quest', { ...row, user_id: userId });
       const title = row.title;
       const id = row.id;
       if (typeof title === 'string' && typeof id === 'string') questIdByTitle.set(title, id);
+      if (typeof id === 'string') restoredUserQuestIds.add(id);
     }
     const systemQuests = await tx.all<{ id: string; title: string }>(
       `SELECT id, title FROM quest WHERE is_system = 1`,
@@ -379,13 +381,23 @@ export async function restoreBackup(db: DbExecutor, payload: BackupPayload): Pro
     let orphaned = 0;
     const stubIds = new Set<string>();
     for (const row of payload.completions) {
-      // The title is the ONLY trustworthy handle. Falling back to the
-      // stored `quest_id` would be actively harmful: after a reinstall
-      // that id either matches nothing (history silently orphaned, or the
-      // whole restore rolled back on the foreign key) or, worse, matches a
-      // *different* quest in the new catalogue.
+      // Two ways to resolve, in order of trust:
+      //
+      //  1. **By id, for the user's own quests.** Their ids survive a
+      //     reinstall because the rows are in the snapshot, so this keeps
+      //     working after a rename - matching those by title would strand
+      //     the history the moment a quest is renamed.
+      //  2. **By title, for system quests**, whose ids are regenerated on
+      //     every install and therefore meaningless in a snapshot.
+      //
+      // Falling back to the stored id for a system quest is not an option:
+      // it either matches nothing, or worse, matches a *different* quest
+      // in the new catalogue.
+      const storedId = typeof row.quest_id === 'string' ? row.quest_id : null;
       const title = typeof row.quest_title === 'string' && row.quest_title.length > 0 ? row.quest_title : null;
-      let questId = title ? questIdByTitle.get(title) : undefined;
+      let questId =
+        (storedId && restoredUserQuestIds.has(storedId) ? storedId : undefined) ??
+        (title ? questIdByTitle.get(title) : undefined);
       if (!questId) {
         // No match anywhere: keep the entry with a stub quest so the
         // calendar and the streak never lose a day.

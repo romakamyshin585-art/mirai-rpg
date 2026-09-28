@@ -108,6 +108,61 @@ export class QuestService {
     return this.q.countArchivedForUser(userId);
   }
 
+  /** Irreversible. Returns how many completions were removed with it. */
+  async hardDelete(id: string, userId: string) {
+    const result = await this.q.hardDeleteForUser(id, userId);
+    this.invalidateCatalogue();
+    return result;
+  }
+
+  countCompletions(id: string) {
+    return this.q.countCompletionsForQuest(id);
+  }
+
+  /**
+   * What an edit is allowed to change, decided here rather than in the UI.
+   *
+   * The rules exist so editing can never be used to manufacture progress:
+   *
+   *  - the reward is fixed at creation. `xp_reward` is not a parameter,
+   *    so there is no code path - new or future - that can raise it;
+   *  - once a quest has been completed, its category and difficulty are
+   *    frozen. `quest_completion` snapshots the category and the XP at the
+   *    moment of completion, so the history and the stat totals are already
+   *    correct; allowing the axis to move underneath a completed quest only
+   *    makes the profile contradict itself;
+   *  - system quests are never editable at all.
+   */
+  async planEdit(
+    id: string,
+    userId: string,
+  ): Promise<{ quest: QuestRow; canChangeShape: boolean; completionCount: number } | null> {
+    const quest = await this.q.getById(id);
+    if (!quest || quest.user_id !== userId || quest.is_system !== 0) return null;
+    const completionCount = await this.countCompletions(id);
+    return { quest, canChangeShape: completionCount === 0, completionCount };
+  }
+
+  async applyEdit(
+    id: string,
+    userId: string,
+    fields: { title: string; description: string | null; category: Category; difficulty: number },
+  ): Promise<boolean> {
+    const plan = await this.planEdit(id, userId);
+    if (!plan) return false;
+    const next = plan.canChangeShape
+      ? fields
+      : {
+          title: fields.title,
+          description: fields.description,
+          category: plan.quest.category,
+          difficulty: plan.quest.difficulty,
+        };
+    const ok = await this.q.updateOwned(id, userId, next);
+    if (ok) this.invalidateCatalogue();
+    return ok;
+  }
+
   async getTodayProgress(userId: string): Promise<TodayProgress> {
     const today = dayKey(new Date());
     // SQL aggregates with local-day range semantics — no listRecent() LIMIT dependency,

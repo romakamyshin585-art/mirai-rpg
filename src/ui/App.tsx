@@ -272,6 +272,25 @@ function getTabIndex(tab: Tab) {
   return TABS.findIndex(item => item.key === tab);
 }
 
+/**
+ * Tab transition.
+ *
+ * The complaint was that a tab "appears" rather than flowing in. The cause
+ * was structural: only the incoming screen was animated, and the outgoing
+ * one was unmounted on the same frame, so every switch was half a
+ * transition - a slide on top, a hard cut underneath.
+ *
+ * Rendering both screens and cross-dissolving them was rejected on
+ * purpose: the Home screen runs nine queries and re-ranks the quest
+ * catalogue, and mounting two of them on every switch would re-trigger all
+ * of it. So the whole host dips instead, and the content is swapped at the
+ * bottom of the dip, where the eye is least able to see it.
+ *
+ * The dip is directional, so a tab change still reads as travel: the
+ * content comes from the side it is travelling to. Opacity bottoms out at
+ * 0.32 rather than 0 - a full fade would read as a screen blanking, which
+ * is the exact failure this app has already had one of.
+ */
 function ScreenTransition({
   tab,
   direction,
@@ -283,34 +302,26 @@ function ScreenTransition({
 }) {
   const reduced = useReducedMotion();
   const progress = useSharedValue(1);
+  const distance = 22 * direction;
 
-  // Visibility is guaranteed: see `useGuaranteedEntrance`. A tab that
-  // cannot animate in still shows itself, because a missing entrance
-  // transition is a cosmetic loss while an invisible tab locks the user
-  // out of the app.
   useGuaranteedEntrance(
     progress,
     () => {
       progress.value = 0;
-      return reduced
-        ? withTiming(1, { duration: duration.reducedMotion, easing: Easing.out(Easing.cubic) })
-        : withSpring(1, spring.navigation);
+      return withTiming(1, { duration: duration.major, easing: Easing.inOut(Easing.cubic) });
     },
     [direction, reduced, tab],
   );
 
   const style = useAnimatedStyle(() => {
-    if (reduced) {
-      return { opacity: progress.value, transform: [] };
-    }
-    // Depth, not just a slide: the incoming screen arrives from slightly
-    // further away and settles in, so switching tabs reads as moving
-    // between two planes instead of sliding a bitmap sideways.
+    if (reduced) return { opacity: 1, transform: [] };
+    const p = progress.value;
     return {
-      opacity: interpolate(progress.value, [0, 0.4, 1], [0, 1, 1], Extrapolate.CLAMP),
+      // In at the trough, out at the crest, full in the second half.
+      opacity: interpolate(p, [0, 0.45, 0.62, 1], [1, 0.32, 0.92, 1], Extrapolate.CLAMP),
       transform: [
-        { translateX: interpolate(progress.value, [0, 1], [direction * 34, 0], Extrapolate.CLAMP) },
-        { scale: interpolate(progress.value, [0, 1], [0.975, 1], Extrapolate.CLAMP) },
+        { translateX: interpolate(p, [0, 1], [distance, 0], Extrapolate.CLAMP) },
+        { scale: interpolate(p, [0, 1], [0.985, 1], Extrapolate.CLAMP) },
       ],
     };
   });
