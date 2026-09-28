@@ -12,6 +12,7 @@ import { BackupSheet } from '../components/BackupSheet';
 import { MotionPressable } from '../components/MotionPressable';
 import { MotionProgressBar } from '../components/MotionProgressBar';
 import { duration, spring, useReducedMotion, useScrollHeader } from '../motion';
+import { APP_VERSION } from '../../app_version';
 
 type Filter = 'all' | 'unlocked' | 'locked';
 
@@ -54,8 +55,6 @@ type AchievementsScreenProps = {
   /** Called after a profile restore so every screen reloads. */
   onDataChanged?: () => void;
 };
-
-const APP_VERSION = '0.4.1';
 
 export function AchievementsScreen({ ctx, revision, celebrationCodes, onDataChanged }: AchievementsScreenProps) {
   const { colors, typographyStylesheet: typography } = useTheme();
