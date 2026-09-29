@@ -123,4 +123,40 @@ describe('Reanimated animatedProps targets', () => {
 
     expect(shared).toEqual([]);
   });
+
+  /**
+   * A numeric SVG prop must be animated with a number.
+   *
+   * `toFixed()` returns a string, and animated props are applied on the UI
+   * thread straight onto the native prop setter - a numeric prop handed a
+   * string raises on the JSI side, where no React error boundary exists. The
+   * app then shows its window and nothing else: a blank screen, restart does
+   * not help, and nothing is ever logged. 0.4.3 shipped exactly that.
+   *
+   * `d` and `offset` are legitimately strings, which is why this is scoped to
+   * `toFixed` rather than to the whole hook: a path is text, an opacity is
+   * not.
+   */
+  test('no animated numeric prop is returned as a formatted string', () => {
+    const offenders: string[] = [];
+
+    for (const file of files) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+      const fs = require('fs') as typeof import('fs');
+      const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+
+      for (let i = 0; i < lines.length; i += 1) {
+        if (!/useAnimatedProps\s*\(/.test(lines[i])) continue;
+        // The body is short and self-contained; read to the closing `});`.
+        for (let j = i; j < Math.min(i + 14, lines.length); j += 1) {
+          if (j > i && !/return\s*\{/.test(lines[j]) && !/['"]worklet['"]/.test(lines[j])) break;
+          if (/toFixed\s*\(/.test(lines[j])) {
+            offenders.push(`${file.replace(/.*[\\/]/, '')}:${j + 1}  ${lines[j].trim()}`);
+          }
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
 });

@@ -20,6 +20,12 @@ import { ScreenBoundary } from './components/ScreenBoundary';
 import { MotionPressable } from './components/MotionPressable';
 import { OverlayProvider, useOverlayActivity } from './components/Overlay';
 import { HAPTIC_EVENTS, duration, scale, spring, useGuaranteedEntrance, useHaptics, usePressAnimation, useReducedMotion } from './motion';
+import { installGlobalErrorHandler } from './global_errors';
+
+// Installed at module scope, before the first render: an error boundary cannot
+// see a UI-thread or async failure, and those are exactly the ones that used
+// to leave the app showing nothing at all.
+installGlobalErrorHandler();
 
 type Tab = 'home' | 'quests' | 'calendar' | 'achievements';
 

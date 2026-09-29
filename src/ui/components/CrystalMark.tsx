@@ -201,9 +201,16 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
   // real view. The band is static now and the highlight breathes through the
   // shape's `fillOpacity` along the same value, which reads the same at this
   // size and costs one mapper instead of three.
+  //
+  // These are NUMBERS, not `toFixed()` strings, and that is load-bearing.
+  // Animated props are applied on the UI thread straight onto the native prop
+  // setter, where a numeric SVG prop handed a string raises on the JSI side -
+  // and a throw over there is not a React render error, so no error boundary
+  // ever sees it. The symptom is the app window going blank with no message,
+  // which is exactly what 0.4.3 shipped.
   const coreShapeProps = useAnimatedProps(() => {
     'worklet';
-    return { fillOpacity: (0.15 + core.value * 0.8).toFixed(3) };
+    return { fillOpacity: 0.15 + core.value * 0.8 };
   });
 
   const sheenShapeProps = useAnimatedProps(() => {
@@ -213,7 +220,7 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
     // Triangular envelope: up through the middle of the loop and back down,
     // so the highlight arrives and leaves instead of blinking.
     const band = Math.max(0, 1 - Math.abs(t * 2 - 1));
-    return { fillOpacity: (band * (live ? 1 : 0.55)).toFixed(3) };
+    return { fillOpacity: band * (live ? 1 : 0.55) };
   });
 
   const facets = useMemo(

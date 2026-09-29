@@ -157,10 +157,15 @@ jobs:
   # extend the wall clock. continue-on-error throughout: the emulator is a
   # smoke signal, not a gate, and it has never been a substitute for the
   # real device.
+  # extend the wall clock.
+  #
+  # The emulator step itself keeps `continue-on-error`, because a flaky
+  # emulator must not block a release. The job does not: the gate step at
+  # the end fails the build when the app demonstrably rendered nothing,
+  # which is the failure this job used to swallow whole.
   smoke-x86:
     runs-on: ubuntu-latest
     timeout-minutes: 50
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -247,8 +252,54 @@ jobs:
 
             echo "--- focused window ---"
             adb shell dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp' || true
+
+            # Evidence only. The verdict is the gate step below, kept separate so a
+            # broken emulator cannot be mistaken for a broken app.
+            if grep -q "Home: load done" emulator-logcat.txt; then
+              echo "::notice title=smoke::Home rendered and loaded"
+            else
+              echo "::warning title=smoke::Home never finished loading - see the gate step"
+            fi
             exit 0
 
+      # The first real assertion this job ever had.
+      #
+      # The screenshots were uploaded and read by nobody, every command in
+      # the step above is `|| true`, and the job ended in `exit 0` - so a
+      # launch that showed nothing but the app background produced a green
+      # build. That is how a blank screen shipped.
+      #
+      # The app logs its own lifecycle, and one line separates "the process
+      # started" from "the interface exists": `Home: load done` means Home
+      # committed a render and its queries resolved. Infrastructure failures
+      # still pass - no logcat, or no app log at all, means the emulator or
+      # the install is what broke - so this only fails on a real product
+      # failure.
+      - name: Enforce smoke gate
+        run: |
+          set -uo pipefail
+          if [ ! -s emulator-logcat.txt ]; then
+            echo "::warning title=smoke-gate::no logcat - the emulator step did not get far enough to judge. Not a product signal."
+            exit 0
+          fi
+          if ! grep -q "MiraiRPG" emulator-logcat.txt; then
+            echo "::error title=smoke-gate::the app never logged a line. Launch failed, or the emulator is broken. Not held against the build."
+            exit 0
+          fi
+          if grep -q "UNCAUGHT" emulator-logcat.txt; then
+            grep "UNCAUGHT" emulator-logcat.txt | head -5 | while IFS= read -r line; do
+              echo "::error title=uncaught::${line}"
+            done
+          fi
+          if ! grep -q "Home: load done" emulator-logcat.txt; then
+            echo "::error title=smoke-gate::Home never finished loading. The app started but never rendered a usable screen."
+            grep "MiraiRPG" emulator-logcat.txt | tail -20 | while IFS= read -r line; do
+              echo "::error title=smoke-tail::${line}"
+            done
+            echo "::error title=smoke-gate::A UI-thread or async failure is the usual cause and no error boundary can catch it. Check the android-emulator-diagnostics artifact for ReactNativeJS and Reanimated lines."
+            exit 1
+          fi
+          echo "::notice title=smoke-gate::passed - Home rendered and loaded"
       - name: Upload emulator diagnostics
         if: always()
         uses: actions/upload-artifact@v4
