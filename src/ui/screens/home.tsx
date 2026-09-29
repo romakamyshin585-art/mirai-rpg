@@ -38,6 +38,7 @@ import {
 } from '../../domain/recommendations';
 import { buildWeeklyReport, type WeeklyReport } from '../../domain/weekly_report';
 import { BOTTOM_NAV_BASE_HEIGHT, CATEGORY_LABELS, useTheme } from '../theme';
+import { logCheckpoint, logEvent } from '../logging';
 import { LucideIcon } from '../components';
 import { RadarChart, type RadarData } from '../components/RadarChart';
 import { CategoryInsightSheet, type AxisInsight } from '../components/CategoryInsightSheet';
@@ -169,6 +170,12 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const countedRef = useRef(new Set<string>());
+  // Render fingerprint. A blank, unresponsive window with no error anywhere is
+  // what a runaway render loop looks like from the outside, so the count and
+  // the shape of the data are counted here and written to the log: a
+  // fingerprint that repeats thousands of times is the answer.
+  const renderCountRef = useRef(0);
+  const lastFingerprintRef = useRef('');
 
   useEffect(() => {
     const store = readDismissals();
@@ -180,12 +187,15 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
 
   const loadData = useCallback(async () => {
     setError(null);
-    // Cheap, and decisive when a device-only failure has to be explained
-    // from a logcat: mount, load start, load end, and which branch rendered.
-    console.log('[MiraiRPG] Home: load start');
+    // Every one of these is flushed to disk before the next one starts, so the
+    // last line in the log names the step the app was on when it stopped. That
+    // is the only thing that distinguishes "hung in a query" from "hung
+    // computing the weekly report" when the symptom is a frozen window.
+    logCheckpoint('home', 'load start');
     try {
       const char = await ctx.character.get(ctx.userId);
       if (!char) throw new Error('Персонаж не найден');
+      logCheckpoint('home', 'character loaded');
       const weekFrom = new Date();
       weekFrom.setDate(weekFrom.getDate() - 7);
       const [characterStats, todayProgress, quests, currentStreak, completions, catalog, unlockedRows, bests, activity] =
@@ -200,8 +210,10 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
           ctx.achievement.listPersonalBests(ctx.userId),
           ctx.quest.getRecentActivity(ctx.userId, 6),
         ]);
+      logCheckpoint('home', 'queries done');
 
       const axisStats: AxisStats = axisStatsFromRows(characterStats);
+      logCheckpoint('home', `axis stats built (${characterStats.length} rows)`);
 
       setCharacter(char);
       setStats(characterStats);
@@ -214,17 +226,18 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
       setTotalAchievements(catalog.length);
       setPersonalBests(bests);
       setRecentActivity(activity);
-      setWeekly(
-        buildWeeklyReport({
-          completions: completions.map(row => ({
-            completedAt: row.completed_at,
-            category: row.category,
-            xp: row.xp_awarded,
-          })),
-          unlocks: unlockedRows.map(row => ({ code: row.code, name: row.name, unlockedAt: row.unlockedAt })),
-          axisTotals: Object.keys(axisStats).length > 0 ? axisStats : emptyAxisStats(),
-        }),
-      );
+      logCheckpoint('home', 'state committed');
+      const weekly = buildWeeklyReport({
+        completions: completions.map(row => ({
+          completedAt: row.completed_at,
+          category: row.category,
+          xp: row.xp_awarded,
+        })),
+        unlocks: unlockedRows.map(row => ({ code: row.code, name: row.name, unlockedAt: row.unlockedAt })),
+        axisTotals: Object.keys(axisStats).length > 0 ? axisStats : emptyAxisStats(),
+      });
+      logCheckpoint('home', `weekly report built (${completions.length} completions)`);
+      setWeekly(weekly);
 
       const weeklyXp: Record<string, number> = {};
       for (const row of completions) {
@@ -236,20 +249,25 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
       // them no longer re-runs these nine queries - that re-ranking on
       // every show was the "долго грузится и перебирает квесты" symptom.
       setRankedInput({ quests, stats: axisStats, level: char.level });
-      console.log(
-        `[MiraiRPG] Home: load done level=${char.level} xp=${char.xp} quests=${quests.length} bests=${bests.length} activity=${activity.length}`,
+      // Deliberately no `recommendations` here: they are ranked in an effect
+      // after this, and reading them from this closure would mean logging a
+      // stale count and adding a dependency to a callback that must stay keyed
+      // on `ctx` alone.
+      logCheckpoint(
+        'home',
+        `load done level=${char.level} xp=${char.xp} quests=${quests.length} bests=${bests.length} activity=${activity.length} completions=${completions.length}`,
       );
     } catch (value) {
       setError(value instanceof Error ? value.message : String(value));
-      console.error('[MiraiRPG] Home: load failed', value);
+      logCheckpoint('home', `load FAILED: ${value instanceof Error ? value.message : String(value)}`);
     } finally {
       setLoading(false);
     }
   }, [ctx]);
 
   useEffect(() => {
-    console.log('[MiraiRPG] Home: mount');
-    return () => console.log('[MiraiRPG] Home: unmount');
+    logEvent('home', 'mounted');
+    return () => logEvent('home', 'unmounted');
   }, []);
 
   useEffect(() => {
@@ -297,6 +315,32 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
     writeShown(next);
     setShownTick(value => value + 1);
   }, [recommendations]);
+
+  // Render census. Pure bookkeeping, no state of its own, so it cannot feed
+  // back into a render. The fingerprint is what makes the log actionable: the
+  // same data shape repeating over and over means a loop, a rapidly changing
+  // fingerprint means something is re-rendering in a storm, and a single
+  // fingerprint followed by silence means the app stopped inside render.
+  {
+    renderCountRef.current += 1;
+    const fingerprint = [
+      character ? `c${character.level}/${character.xp}` : 'c-',
+      `s${stats.length}`,
+      `q${activeQuests.length}`,
+      `r${recommendations.length}`,
+      `w${weekly ? '1' : '0'}`,
+      `b${personalBests.length}`,
+      `a${recentActivity.length}`,
+      `t${todayXp}/${streak}/${completedToday}`,
+      axisSheet ?? '-',
+      `l${loading ? 1 : 0}`,
+    ].join('|');
+    const repeats = fingerprint === lastFingerprintRef.current ? renderCountRef.current : 1;
+    if (repeats === 1 || repeats === 2 || repeats === 25 || repeats % 200 === 0) {
+      logEvent('home-render', `#${renderCountRef.current} same=${repeats} ${fingerprint}`);
+    }
+    lastFingerprintRef.current = fingerprint;
+  }
 
   const refresh = async () => {
     setRefreshing(true);

@@ -46,6 +46,15 @@ export function installGlobalErrorHandler(): void {
     console.error(`${PREFIX} ${isFatal ? 'fatal: ' : ''}${lastUncaught}`);
     if (error instanceof Error && error.stack) console.error(`${PREFIX} ${error.stack}`);
 
+    // Written to disk, not just to memory: the failure this app keeps hitting
+    // freezes the window, and a log that only exists in RAM dies with it.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+      require('./logging').setUncaughtForLog(`${isFatal ? 'fatal: ' : ''}${lastUncaught}`);
+    } catch {
+      // the logger must never be the reason the app fails
+    }
+
     // Never swallow: React Native's own handler is what turns this into a
     // crash report and, in dev, a red box.
     previous?.(error, isFatal);

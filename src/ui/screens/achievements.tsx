@@ -9,6 +9,7 @@ import { BOTTOM_NAV_BASE_HEIGHT, RARITY_COLORS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
 import { Overlay, type MorphOrigin } from '../components/Overlay';
 import { BackupSheet } from '../components/BackupSheet';
+import { DiagnosticsSheet } from '../components/DiagnosticsSheet';
 import { MotionPressable } from '../components/MotionPressable';
 import { MotionProgressBar } from '../components/MotionProgressBar';
 import { duration, spring, useReducedMotion, useScrollHeader } from '../motion';
@@ -74,6 +75,7 @@ export function AchievementsScreen({ ctx, revision, celebrationCodes, onDataChan
   const [error, setError] = useState<string | null>(null);
   const [unlockedCelebrationCodes, setUnlockedCelebrationCodes] = useState<string[]>([]);
   const [showBackup, setShowBackup] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const hasLoaded = useRef(false);
 
   useEffect(() => {
@@ -259,6 +261,30 @@ export function AchievementsScreen({ ctx, revision, celebrationCodes, onDataChan
           </View>
           <LucideIcon name="chevron-right" size={18} color={colors.textMuted} />
         </MotionPressable>
+
+        {/*
+          Diagnostics. On the Achievements tab specifically because it is
+          reachable without opening Home - the failure being chased takes Home
+          down, so an entry point inside Home would be unusable exactly when it
+          is needed.
+        */}
+        <MotionPressable
+          accessibilityRole="button"
+          accessibilityLabel="Диагностика: скопировать лог"
+          onPress={() => setShowDiagnostics(true)}
+          style={[styles.backupRow, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}
+        >
+          <View style={[styles.backupIcon, { backgroundColor: colors.dangerSoft }]}>
+            <LucideIcon name="file-text" size={18} color={colors.textMuted} />
+          </View>
+          <View style={styles.backupCopy}>
+            <Text style={[typography.bodyStrong, { color: colors.text }]}>Диагностика</Text>
+            <Text style={[typography.caption, { color: colors.textMuted }]}>
+              Скопировать лог приложения, если что-то зависло или экран стал пустым
+            </Text>
+          </View>
+          <LucideIcon name="chevron-right" size={18} color={colors.textMuted} />
+        </MotionPressable>
       </Animated.ScrollView>
       {showBackup ? (
         <BackupSheet
@@ -271,6 +297,7 @@ export function AchievementsScreen({ ctx, revision, celebrationCodes, onDataChan
           }}
         />
       ) : null}
+      <DiagnosticsSheet visible={showDiagnostics} onClose={() => setShowDiagnostics(false)} />
       <AchievementDetails
         item={selected}
         onClose={() => setSelected(null)}
