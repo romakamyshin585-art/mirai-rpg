@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
-import Animated, { Easing, Extrapolate, interpolate, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, Easing, Extrapolate, interpolate, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
 import { CompletionRepo, QuestRepo } from '../../repos/quest_repo';
@@ -146,17 +146,20 @@ export function CalendarScreen({ ctx, revision, onDataChanged }: CalendarScreenP
   useEffect(() => {
     if (!selectedLayout) {
       selectionOpacity.value = withTiming(0, { duration: duration.micro });
-      return;
-    }
-    if (reduced) {
+    } else if (reduced) {
       selectionX.value = selectedLayout.x;
       selectionY.value = selectedLayout.y;
       selectionOpacity.value = withTiming(1, { duration: duration.reducedMotion });
-      return;
+    } else {
+      selectionX.value = withSpring(selectedLayout.x, spring.card);
+      selectionY.value = withSpring(selectedLayout.y, spring.card);
+      selectionOpacity.value = withTiming(1, { duration: duration.micro, easing: Easing.out(Easing.cubic) });
     }
-    selectionX.value = withSpring(selectedLayout.x, spring.card);
-    selectionY.value = withSpring(selectedLayout.y, spring.card);
-    selectionOpacity.value = withTiming(1, { duration: duration.micro, easing: Easing.out(Easing.cubic) });
+    return () => {
+      cancelAnimation(selectionOpacity);
+      cancelAnimation(selectionX);
+      cancelAnimation(selectionY);
+    };
   }, [reduced, selectedLayout, selectionOpacity, selectionX, selectionY]);
 
   const monthStyle = useAnimatedStyle(() => ({

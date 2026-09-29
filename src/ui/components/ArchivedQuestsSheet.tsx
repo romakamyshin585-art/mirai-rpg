@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
 import type { QuestRow } from '../../repos/quest_repo';
@@ -57,11 +57,12 @@ export function ArchivedQuestsSheet({
   useEffect(() => {
     if (!visible) {
       progress.value = withTiming(0, { duration: 140 });
-      return;
+    } else {
+      progress.value = reduced
+        ? withTiming(1, { duration: 180 })
+        : withSpring(1, spring.sheet);
     }
-    progress.value = reduced
-      ? withTiming(1, { duration: 180 })
-      : withSpring(1, spring.sheet);
+    return () => cancelAnimation(progress);
   }, [progress, reduced, visible]);
 
   useEffect(() => {

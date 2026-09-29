@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { Easing, interpolateColor, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, cancelAnimation, interpolateColor, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import type { AppContext } from '../app_context';
 import type { QuestRow } from '../../repos/quest_repo';
 import { CATEGORIES, type Category } from '../../domain/category';
@@ -599,18 +599,19 @@ function QuestCard({ quest, busy, disabled, completed, highlighted = false, onCo
   useEffect(() => {
     if (!highlighted) {
       halo.value = withTiming(0, { duration: duration.micro });
-      return;
+    } else {
+      // Hand-off glow: rise, hold, fade. One shot, no loop.
+      halo.value = reduced
+        ? withSequence(
+            withTiming(1, { duration: duration.reducedMotion }),
+            withDelay(320, withTiming(0, { duration: duration.reducedMotion })),
+          )
+        : withSequence(
+            withTiming(1, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
+            withDelay(320, withTiming(0, { duration: duration.major, easing: Easing.in(Easing.cubic) })),
+          );
     }
-    // Hand-off glow: rise, hold, fade. One shot, no loop.
-    halo.value = reduced
-      ? withSequence(
-          withTiming(1, { duration: duration.reducedMotion }),
-          withDelay(320, withTiming(0, { duration: duration.reducedMotion })),
-        )
-      : withSequence(
-          withTiming(1, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
-          withDelay(320, withTiming(0, { duration: duration.major, easing: Easing.in(Easing.cubic) })),
-        );
+    return () => cancelAnimation(halo);
   }, [halo, highlighted, reduced]);
 
   useEffect(() => {
@@ -865,10 +866,14 @@ function FilterRow({
     if (reduced) {
       pillX.value = x;
       pillW.value = w;
-      return;
+    } else {
+      pillX.value = withSpring(x, spring.navigation);
+      pillW.value = withSpring(w, spring.navigation);
     }
-    pillX.value = withSpring(x, spring.navigation);
-    pillW.value = withSpring(w, spring.navigation);
+    return () => {
+      cancelAnimation(pillX);
+      cancelAnimation(pillW);
+    };
   }, [offsets, pillW, pillX, reduced, value, widths]);
 
   const pillStyle = useAnimatedStyle(() => ({

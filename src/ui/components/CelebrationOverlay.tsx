@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, cancelAnimation, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { duration, spring } from '../motion';
 import { useReducedMotion } from '../motion';
 
@@ -26,6 +26,15 @@ export function CelebrationOverlay({ visible, title, message }: CelebrationOverl
       ? withDelay(60, withSequence(withTiming(1, { duration: duration.reducedMotion }), withDelay(220, withTiming(0, { duration: duration.reducedMotion }))))
       : withDelay(60, withSequence(withTiming(1, { duration: duration.micro }), withDelay(220, withTiming(0, { duration: duration.standard, easing: Easing.out(Easing.cubic) }))));
   }, [glow, progress, reduced, visible]);
+
+  // Both mappers below are bound to views that only exist while `visible`, and
+  // the overlay unmounts the moment the owner clears it - usually mid-animation.
+  // Cancelling on the way out keeps the UI thread from writing to a view tag
+  // React has already removed.
+  useEffect(() => () => {
+    cancelAnimation(progress);
+    cancelAnimation(glow);
+  }, [glow, progress]);
 
   const cardStyle = useAnimatedStyle(() => ({
     opacity: progress.value,

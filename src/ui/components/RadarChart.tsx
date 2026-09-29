@@ -18,7 +18,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Animated, { Easing, Extrapolate, interpolate, useAnimatedProps, useAnimatedReaction, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, { Easing, Extrapolate, cancelAnimation, interpolate, useAnimatedProps, useAnimatedReaction, useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { Circle, Defs, G, Line, LinearGradient, Path, Polygon, RadialGradient, Stop, Svg } from 'react-native-svg';
 import { CATEGORIES, type Category } from '../../domain/category';
 import { CATEGORY_LABELS, useTheme } from '../theme';
@@ -368,23 +368,24 @@ function AxisPod({
   useEffect(() => {
     if (reduced) {
       entrance.value = withTiming(1, { duration: duration.reducedMotion });
-      return;
+    } else {
+      entrance.value = withDelay(
+        90 + index * 65,
+        withSequence(
+          withTiming(1.12, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
+          withSpring(1, spring.celebration),
+        ),
+      );
     }
-    entrance.value = withDelay(
-      90 + index * 65,
-      withSequence(
-        withTiming(1.12, { duration: duration.micro, easing: Easing.out(Easing.cubic) }),
-        withSpring(1, spring.celebration),
-      ),
-    );
+    // `entrance` is staggered, so a pod that unmounts early - a tab switch
+    // mid-flight is the normal case - still has a delayed animation queued
+    // against it. Cancel on the way out.
+    return () => cancelAnimation(entrance);
   }, [entrance, index, reduced]);
 
   useEffect(() => {
-    if (!active) {
-      press.value = withSpring(0, spring.navigation);
-      return;
-    }
-    press.value = withSpring(1, spring.navigation);
+    press.value = active ? withSpring(1, spring.navigation) : withSpring(0, spring.navigation);
+    return () => cancelAnimation(press);
   }, [active, press]);
 
   const podStyle = useAnimatedStyle(() => ({

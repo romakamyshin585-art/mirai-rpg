@@ -178,6 +178,10 @@ export function CrystalMark({ size = 96, animated = true }: CrystalMarkProps) {
       withSpring(1, spring.celebration),
     );
     core.value = withDelay(160, withSpring(1, spring.card));
+    return () => {
+      cancelAnimation(entrance);
+      cancelAnimation(core);
+    };
   }, [core, entrance, reduced]);
 
   const wrapStyle = useAnimatedStyle(() => ({

@@ -20,7 +20,7 @@
 
 import { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
 import { MotionPressable } from './MotionPressable';
@@ -62,11 +62,12 @@ export function ConfirmDialog({
   useEffect(() => {
     if (!visible) {
       progress.value = withTiming(0, { duration: duration.micro });
-      return;
+    } else {
+      progress.value = reduced
+        ? withTiming(1, { duration: duration.reducedMotion })
+        : withSpring(1, spring.sheet);
     }
-    progress.value = reduced
-      ? withTiming(1, { duration: duration.reducedMotion })
-      : withSpring(1, spring.sheet);
+    return () => cancelAnimation(progress);
   }, [progress, reduced, visible]);
 
   const cardStyle = useAnimatedStyle(() => ({

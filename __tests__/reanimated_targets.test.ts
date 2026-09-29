@@ -159,4 +159,92 @@ describe('Reanimated animatedProps targets', () => {
 
     expect(offenders).toEqual([]);
   });
+
+  /**
+   * An animated component must not be keyed by a value that changes.
+   *
+   * `key={`today-xp-${xp}`}` is the tempting way to replay an entrance when a
+   * number changes, but a key change is an unmount plus a mount - so the
+   * outgoing instance is destroyed while its animation is still running, and
+   * its UI-thread mapper keeps writing to a view tag React has already
+   * dropped. Reanimated reports that as "Cannot find host instance" from the
+   * UI thread, where no error boundary exists: the app keeps its window and
+   * goes blank, with nothing in logcat and no recovery short of reinstalling.
+   *
+   * Home carried three of these, and completing one quest moved all three at
+   * once, which is why Home broke and no other tab did.
+   *
+   * The fix belongs in the component, not the call site: `MotionNumber` now
+   * depends on `value` and resets its progress to 0, so the same instance
+   * replays without a remount. This test keeps the call sites from
+   * reintroducing the pattern.
+   */
+  test('no animated component is keyed by a changing value', () => {
+    const offenders: string[] = [];
+    const ANIMATED = /<\s*(Motion[A-Z]\w*|Animated\.\w+|CrystalMark|RadarChart|CompletionBurst|Toast)\b/;
+
+    for (const file of files) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+      const fs = require('fs') as typeof import('fs');
+      const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+
+      lines.forEach((line, index) => {
+        if (!ANIMATED.test(line) || !/key=\{/.test(line)) return;
+        offenders.push(`${file.replace(/.*[\\/]/, '')}:${index + 1}  ${line.trim().slice(0, 100)}`);
+      });
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * Every animation started in an effect has to be cancellable on unmount.
+   *
+   * `CompletionBurst` got this right from the start; `MotionNumber`,
+   * `Toast`, `CelebrationOverlay`, `CrystalMark`, the radar pods, the
+   * calendar's selection pill, the quest pill and the archived sheet did not,
+   * and those are exactly the components that appear and disappear while
+   * animating.
+   *
+   * The check is per shared value, not per effect: a component may cancel
+   * from a dedicated unmount effect (`QuestSearchField` does) and that is
+   * just as good, so requiring the cleanup inside the same `useEffect` would
+   * report a false positive.
+   */
+  test('every shared value animated in an effect is cancelled somewhere', () => {
+    const offenders: string[] = [];
+
+    for (const file of files) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+      const fs = require('fs') as typeof import('fs');
+      const text = fs.readFileSync(file, 'utf8');
+      const lines = text.split(/\r?\n/);
+      const cancelled = new Set<string>();
+      for (const match of text.matchAll(/cancelAnimation\(\s*(\w+)\s*\)/g)) {
+        cancelled.add(match[1]);
+      }
+
+      for (let i = 0; i < lines.length; i += 1) {
+        if (!/useEffect\s*\(/.test(lines[i])) continue;
+        const indent = (lines[i].match(/^[ \t]*/) as RegExpMatchArray)[0].length;
+        let body = '';
+        let started = false;
+        for (let j = i; j < Math.min(i + 60, lines.length); j += 1) {
+          if (j > i && started && new RegExp(`^[ \\t]{0,${indent}}\\}`).test(lines[j])) break;
+          body += `${lines[j]}\n`;
+          if (lines[j].includes('=>')) started = true;
+        }
+
+        for (const match of body.matchAll(/(\w+)\.value\s*=\s*with/g)) {
+          const name = match[1];
+          if (cancelled.has(name)) continue;
+          offenders.push(
+            `${file.replace(/.*[\\/]/, '')}:${i + 1}  \`${name}\` is animated and never cancelled`,
+          );
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
 });

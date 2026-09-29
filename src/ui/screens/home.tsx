@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import Animated, { Easing, Extrapolate, interpolate, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, { cancelAnimation, Easing, Extrapolate, interpolate, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppContext } from '../app_context';
 import { CompletionRepo, type QuestRow } from '../../repos/quest_repo';
@@ -439,7 +439,7 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
             <View style={[styles.avatar, { borderColor: colors.accent, backgroundColor: colors.surfaceElevated }]}>
               <CrystalMark size={32} animated={false} />
               <View style={[styles.levelDot, { backgroundColor: colors.accent, borderColor: colors.bg }]}>
-                <MotionNumber key={`level-${character.level}`} value={character.level} style={[styles.levelDotText, { color: colors.textInverse }]} />
+                <MotionNumber value={character.level} style={[styles.levelDotText, { color: colors.textInverse }]} />
               </View>
             </View>
           </View>
@@ -473,12 +473,12 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
           <View style={styles.metricsRow}>
             <View style={styles.metric}>
               <LucideIcon name="zap" size={16} color={colors.accent} />
-              <MotionNumber key={`today-xp-${todayXp}`} value={todayXp} style={[styles.metricValue, typography.numeric, { color: colors.text }]} />
+              <MotionNumber value={todayXp} style={[styles.metricValue, typography.numeric, { color: colors.text }]} />
               <Text style={[typography.caption, { color: colors.textMuted }]}>XP сегодня</Text>
             </View>
             <View style={styles.metric}>
               <LucideIcon name="flame" size={16} color={colors.warning} />
-              <MotionNumber key={`streak-${streak}`} value={streak} style={[styles.metricValue, typography.numeric, { color: colors.text }]} />
+              <MotionNumber value={streak} style={[styles.metricValue, typography.numeric, { color: colors.text }]} />
               <Text style={[typography.caption, { color: colors.textMuted }]}>дней подряд</Text>
             </View>
             <View style={styles.metric}>
@@ -917,16 +917,19 @@ function CollapsibleBlock({
     if (expanded) {
       setMounted(true);
       progress.value = reduced ? 1 : withSpring(1, spring.card);
-      return;
-    }
-    if (reduced) {
+    } else if (reduced) {
       setMounted(false);
       progress.value = 0;
-      return;
+    } else {
+      progress.value = withTiming(0, { duration: duration.standard, easing: Easing.in(Easing.cubic) }, finished => {
+        if (finished) setMounted(false);
+      });
     }
-    progress.value = withTiming(0, { duration: duration.standard, easing: Easing.in(Easing.cubic) }, finished => {
-      if (finished) setMounted(false);
-    });
+    // The collapse runs through a `finished` callback that calls setState, so
+    // cancelling matters twice over: it stops the UI-thread mapper writing to a
+    // view that may already be gone, and it stops a late `setMounted(false)`
+    // after unmount.
+    return () => cancelAnimation(progress);
   }, [expanded, progress, reduced]);
 
   const bodyStyle = useAnimatedStyle(() => ({

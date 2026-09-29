@@ -14,7 +14,7 @@
 
 import { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, cancelAnimation, useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 import { MotionPressable } from './components/MotionPressable';
 import { duration, useReducedMotion } from './motion';
 import { useTheme } from './theme';
@@ -46,6 +46,12 @@ export function Toast({ message, actionLabel, onAction, onHide, bottomOffset, to
       // is only ever seen when it is interrupted.
       withTiming(1, { duration: 1 }),
     );
+    // The owner unmounts this component while the sequence is usually still
+    // running, and `hostStyle` is a UI-thread mapper bound to this view. Left
+    // uncancelled it keeps writing to a view tag React has already dropped,
+    // which Reanimated reports as "Cannot find host instance" from the UI
+    // thread - somewhere no error boundary can see it.
+    return () => cancelAnimation(progress);
   }, [message, progress, reduced]);
 
   const hostStyle = useAnimatedStyle(() => ({
