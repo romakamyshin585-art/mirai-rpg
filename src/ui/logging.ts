@@ -22,6 +22,7 @@ const FILE_NAME = 'mirai-rpg.log';
 type Entry = { at: string; tag: string; text: string };
 
 let lines: Entry[] = [];
+let restoredCount = 0;
 let lastWrite = 0;
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
 let logPath: string | null = null;
@@ -33,38 +34,41 @@ function logDirectory(): string | null {
 }
 
 /**
- * A second copy, somewhere a file manager can actually see.
+ * Where a copy is written so the user can reach it without root.
  *
- * `documentDirectory` is the app's private directory - on Android it lives
- * under /data/data/<package>/, which no file manager may read without root,
- * which is why "where is the com.mirai.rpg folder" has no answer and searching
- * for it finds nothing. It is not hidden, it is unreachable.
+ * Order matters, and the first one is the point of all this. The app's private
+ * directory is unreadable by any file manager, and the failure being chased
+ * freezes the app on its very first screen - so the log has to be sitting in a
+ * folder the user can open *before* they think to look, without launching
+ * anything.
  *
- * The app-specific *external* directory is different: the owning app may
- * always write there without a single permission, and on Android 10 - which is
- * what this phone runs - it is visible in the stock file manager and in Total
- * Commander. So the log lands there too, and the user can copy the file out and
- * attach it, with no PC, no USB debugging and no clipboard round trip.
- *
- * Best effort by design: a phone that refuses the write still gets the private
- * copy, and the in-app button still works.
+ *  - Download: visible in every file manager, in the Downloads app, over USB
+ *    without root. Needs legacy external storage on Android 10, which the build
+ *    now requests - with it off, the OS refused the write and the catch
+ *    swallowed it, which is why 0.4.7 produced no folder at all.
+ *  - Android/data: the app-specific external folder. Free to write, but some
+ *    OEM skins hide it from file managers, so it is a second copy, not the
+ *    first.
  */
-const EXTERNAL_DIR = '/sdcard/Android/data/com.mirai.rpg/files/';
-const EXTERNAL_FILE = `${EXTERNAL_DIR}${FILE_NAME}`;
+const VISIBLE_TARGETS: { label: string; dir: string }[] = [
+  { label: 'Download', dir: '/sdcard/Download/' },
+  { label: 'Android/data', dir: '/sdcard/Android/data/com.mirai.rpg/files/' },
+];
 
-/** Whether the external copy actually made it, so a report can say so. */
-let externalWriteOk: boolean | null = null;
+const results: Record<string, string> = {};
 
-async function writeExternalCopy(): Promise<void> {
-  try {
-    const info = await (FileSystem as any).getInfoAsync(EXTERNAL_DIR);
-    if (!info.exists) await (FileSystem as any).makeDirectoryAsync(EXTERNAL_DIR, { intermediates: true });
-    await FileSystem.writeAsStringAsync(EXTERNAL_FILE, serialise());
-    externalWriteOk = true;
-  } catch {
-    // Not fatal: the private copy is the authoritative one, and sharing the
-    // file does not depend on this at all.
-    externalWriteOk = false;
+async function writeVisibleCopies(): Promise<void> {
+  const body = serialise();
+  for (const target of VISIBLE_TARGETS) {
+    const path = `${target.dir}${FILE_NAME}`;
+    try {
+      const info = await (FileSystem as any).getInfoAsync(target.dir);
+      if (!info.exists) await (FileSystem as any).makeDirectoryAsync(target.dir, { intermediates: true });
+      await FileSystem.writeAsStringAsync(path, body);
+      results[target.label] = `written (${path})`;
+    } catch (error) {
+      results[target.label] = `refused: ${error instanceof Error ? error.message : String(error)}`;
+    }
   }
 }
 
@@ -114,10 +118,17 @@ export async function initLogging(): Promise<void> {
     if (info.exists) {
       const previous = await FileSystem.readAsStringAsync(path);
       const previousLines = previous.split('\n').filter(Boolean).slice(-250);
+      // Restored verbatim, tags intact - the safe-start check reads them. The
+      // split is by the two-space separator the formatter writes, so a line
+      // with a free-text tail still lands in the right bucket.
       lines = previousLines.map(line => {
-        const [at = '', ...rest] = line.split(/\s{2,}/);
-        return { at, tag: 'previous', text: rest.join('  ') };
+        const parts = line.split(/\s{2,}/);
+        const at = parts[0] ?? '';
+        const tag = (parts[1] ?? 'previous').trim();
+        const text = parts.slice(2).join('  ').trim();
+        return { at, tag, text };
       });
+      restoredCount = lines.length;
     }
   } catch {
     // ignore
@@ -126,7 +137,7 @@ export async function initLogging(): Promise<void> {
   // Written at startup, not only on the next checkpoint: a user who installs
   // and goes straight to the file manager to look for the log must find one.
   void writeNow();
-  void writeExternalCopy();
+  void writeVisibleCopies();
 }
 
 /**
@@ -201,7 +212,7 @@ export function logCheckpoint(tag: string, text: string): void {
     writeTimer = null;
   }
   void writeNow();
-  void writeExternalCopy();
+  void writeVisibleCopies();
 }
 
 export function setUncaughtForLog(detail: string): void {
@@ -219,6 +230,33 @@ export function readLogText(): string {
   return `${header}${serialise()}\n`;
 }
 
+/**
+ * Did the previous session die inside Home?
+ *
+ * The failure being chased takes the app down on its very first screen, so
+ * every in-app route to the log is unreachable exactly when it is needed: the
+ * app opens on Home, Home is what kills it, and the user cannot even switch
+ * tabs to reach the diagnostics. So the app has to notice by itself and start
+ * somewhere else.
+ *
+ * It does not need a flag for this. `initLogging` already restores the tail of
+ * the previous session, so the question is answerable from the log itself: if
+ * the last thing the old session said was a Home checkpoint that is not a
+ * completed load, then that is where it stopped. A session that died on another
+ * tab ends with that tab's line, or with an app-level line, and is left alone -
+ * which is why this is a check on the log rather than a boolean that has to be
+ * maintained by hand at two points in the code.
+ *
+ * No storage is involved, deliberately: React Native has no localStorage, so a
+ * flag kept there would silently never persist.
+ */
+export function lastSessionDiedInsideHome(): boolean {
+  const restored = lines.slice(0, restoredCount);
+  if (restored.length === 0) return false;
+  const last = restored[restored.length - 1];
+  return last.tag === 'home' && !/load done/.test(last.text);
+}
+
 /** Everything the app knows about its own health, for a bug report. */
 export function readDiagnostics(): string {
   const stuck = lines
@@ -232,7 +270,8 @@ export function readDiagnostics(): string {
     `lines kept: ${lines.length}`,
     `last uncaught: ${lastUncaughtError ?? 'none recorded'}`,
     `private log: ${logFilePath() ?? 'unavailable'}`,
-    `visible copy: ${EXTERNAL_FILE} (${externalWriteOk === null ? 'not attempted' : externalWriteOk ? 'written' : 'write refused by the OS'})`,
+    ...VISIBLE_TARGETS.map(target => `visible copy [${target.label}]: ${results[target.label] ?? 'not attempted'}`),
+    `safe start check: ${lastSessionDiedInsideHome() ? 'the last session stopped inside Home' : 'the last session ended normally'}`,
     '',
     'LAST LINES BEFORE THE PROBLEM',
     stuck,

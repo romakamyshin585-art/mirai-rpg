@@ -2,7 +2,7 @@
   "expo": {
     "name": "Mirai RPG",
     "slug": "mirai-rpg",
-    "version": "0.4.8",
+    "version": "0.4.9",
     "orientation": "portrait",
     "scheme": "mirairpg",
     "userInterfaceStyle": "dark",
@@ -38,7 +38,7 @@
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
             "enablePngCrunchInReleaseBuilds": true,
-            "useLegacyPackaging": false
+            "useLegacyPackaging": true
           }
         }
       ]

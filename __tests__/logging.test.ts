@@ -104,26 +104,38 @@ describe('rolling on-disk log', () => {
   test('a copy lands in the external folder a file manager can open', async () => {
     const { logCheckpoint } = require('../src/ui/logging');
     logCheckpoint('home', 'load done');
-    await Promise.resolve();
-    await Promise.resolve();
+    // Two visible targets now, each an await chain of its own, so this has to
+    // let the microtask queue drain rather than tick a fixed twice.
+    for (let i = 0; i < 12; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.resolve();
+    }
 
-    const external = mockWrites.find(w => w.path.startsWith('/sdcard/Android/data/com.mirai.rpg/files/'));
-    expect(external).toBeDefined();
-    expect(external!.path.endsWith('mirai-rpg.log')).toBe(true);
-    expect(external!.contents).toContain('load done');
+    const visible = mockWrites.filter(w => w.path.startsWith('/sdcard/'));
+    expect(visible.length).toBeGreaterThanOrEqual(2);
+    // Download is the one a file manager on Android 10 can always be relied on
+    // to show, so it is the one that matters.
+    const download = visible.find(w => w.path.startsWith('/sdcard/Download/'));
+    expect(download).toBeDefined();
+    expect(download!.path.endsWith('mirai-rpg.log')).toBe(true);
+    expect(download!.contents).toContain('load done');
   });
 
-  test('a refused external write leaves the private copy intact', async () => {
+  test('a refused visible write leaves the private copy intact', async () => {
     const fs = require('expo-file-system');
     fs.makeDirectoryAsync = jest.fn(async () => {
       throw new Error('EACCES');
     });
-    const { logCheckpoint } = require('../src/ui/logging');
+    fs.getInfoAsync = jest.fn(async () => ({ exists: false }));
+    const { logCheckpoint, readDiagnostics } = require('../src/ui/logging');
     expect(() => logCheckpoint('home', 'private still written')).not.toThrow();
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let i = 0; i < 12; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.resolve();
+    }
 
-    expect(mockWrites.some(w => w.path.includes('mirai-rpg.log') && !w.path.startsWith('/sdcard'))).toBe(true);
+    expect(mockWrites.some(w => w.path === 'file:///mock/mirai-rpg.log')).toBe(true);
+    expect(readDiagnostics()).toContain('refused');
   });
 
   /**

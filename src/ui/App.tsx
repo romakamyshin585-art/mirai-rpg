@@ -15,13 +15,14 @@ import { BOTTOM_NAV_BASE_HEIGHT, ThemeProvider, makeShadow, useTheme } from './t
 import { useNunitoFonts } from './fonts';
 import { LucideIcon } from './components';
 import { CelebrationOverlay } from './components/CelebrationOverlay';
+import { DiagnosticsSheet } from './components/DiagnosticsSheet';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
 import { ScreenBoundary } from './components/ScreenBoundary';
 import { MotionPressable } from './components/MotionPressable';
 import { OverlayProvider, useOverlayActivity } from './components/Overlay';
 import { HAPTIC_EVENTS, duration, scale, spring, useGuaranteedEntrance, useHaptics, usePressAnimation, useReducedMotion } from './motion';
 import { installGlobalErrorHandler } from './global_errors';
-import { initLogging } from './logging';
+import { initLogging, lastSessionDiedInsideHome, logEvent } from './logging';
 
 // Installed at module scope, before the first render: an error boundary cannot
 // see a UI-thread or async failure, and those are exactly the ones that used
@@ -45,7 +46,14 @@ type CelebrationState = {
 function AppContent() {
   const insets = useSafeAreaInsets();
   const [ctx, setCtx] = useState<AppContext | null>(null);
+  // Home is the screen that has been dying on start, and the previous session's
+  // log is what says so - the user cannot even reach a tab, let alone the
+  // diagnostics, when the app dies on its first screen. The decision is made
+  // here, while nothing but the loading screen is on display, so `tab` is
+  // already correct by the time any screen mounts.
+  const [safeStart, setSafeStart] = useState(false);
   const [tab, setTab] = useState<Tab>('home');
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState<1 | -1>(1);
   const previousTabRef = useRef<Tab>('home');
   const [revision, setRevision] = useState(0);
@@ -91,14 +99,26 @@ function AppContent() {
         if (cancelled) return;
         stage = 'complete';
         setInitStage(stage);
+        // Read before the tabs render, so the first screen the user sees is one
+        // that works. Home stays the default the moment a session ends
+        // normally, which is why this cannot strand the app elsewhere.
+        const died = lastSessionDiedInsideHome();
+        logEvent('app', `previous session stopped inside Home: ${died}`);
+        if (!cancelled) setSafeStart(died);
+        if (!cancelled && died) setTab('achievements');
         setCtx(context);
-      } catch (error) {
-        if (cancelled) return;
-        const value = error instanceof Error ? error : new Error(String(error));
-        console.error('[MiraiRPG] Init failed:', value);
-        setInitError(`${stage}: ${value.message}`);
-        setInitStage('error');
-      }
+    } catch (error) {
+      if (cancelled) return;
+      const value = error instanceof Error ? error : new Error(String(error));
+      console.error('[MiraiRPG] Init failed:', value);
+      setInitError(`${stage}: ${value.message}`);
+      setInitStage('error');
+    } finally {
+      // A frozen first frame is not an init failure, so this has to be
+      // timestamped rather than logged: init completes long before Home can
+      // die, and a delay between the two is exactly what tells them apart.
+      logEvent('app', `init settled at ${new Date().toISOString()}`);
+    }
     };
 
     void initialize();
@@ -255,6 +275,26 @@ function AppContent() {
           title={celebration?.title ?? ''}
           message={celebration?.message ?? ''}
         />
+        {safeStart ? (
+          <View style={[styles.safeStart, { top: insets.top + 8, backgroundColor: colors.surface }]}>
+            <View style={styles.safeStartCopy}>
+              <Text style={[styles.safeStartTitle, { color: colors.text }]}>Запуск без главной</Text>
+              <Text style={[styles.safeStartBody, { color: colors.textMuted }]}>
+                В прошлый раз приложение зависало на главной. Лог приложения нужен, чтобы это
+                починить.
+              </Text>
+            </View>
+            <MotionPressable
+              accessibilityRole="button"
+              accessibilityLabel="Открыть диагностику"
+              onPress={() => setShowDiagnostics(true)}
+              style={[styles.safeStartButton, { backgroundColor: colors.accent }]}
+            >
+              <Text style={[styles.safeStartButtonLabel, { color: colors.textInverse }]}>Лог</Text>
+            </MotionPressable>
+          </View>
+        ) : null}
+        <DiagnosticsSheet visible={showDiagnostics} onClose={() => setShowDiagnostics(false)} />
       </View>
     </View>
   );
@@ -512,6 +552,25 @@ const styles = StyleSheet.create({
   app: { flex: 1 },
   screen: { flex: 1 },
   screenHost: { flex: 1 },
+  safeStart: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2A2E37',
+    zIndex: 200,
+    elevation: 200,
+  },
+  safeStartCopy: { flex: 1 },
+  safeStartTitle: { fontFamily: 'Nunito', fontSize: 15, lineHeight: 20, fontWeight: '800' },
+  safeStartBody: { fontFamily: 'Nunito', fontSize: 11, lineHeight: 15, marginTop: 2 },
+  safeStartButton: { minWidth: 74, minHeight: 40, paddingHorizontal: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  safeStartButtonLabel: { fontFamily: 'Nunito', fontSize: 14, fontWeight: '800' },
   centered: {
     flex: 1,
     alignItems: 'center',
