@@ -325,7 +325,10 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
     renderCountRef.current += 1;
     const fingerprint = [
       character ? `c${character.level}/${character.xp}` : 'c-',
-      `s${stats.length}`,
+      // Values, not just the row count. Completing a quest changes a stat's
+      // value while the number of rows stays 5, and a census that only counted
+      // rows was blind to the one difference that matters here.
+      `s${stats.map(row => row.value).join('.')}`,
       `q${activeQuests.length}`,
       `r${recommendations.length}`,
       `w${weekly ? '1' : '0'}`,
@@ -1010,17 +1013,50 @@ function CollapsibleBlock({
           <LucideIcon name="chevron-down" size={18} color={colors.textMuted} />
         </Animated.View>
       </MotionPressable>
+      {/*
+        The measured element and the animated element must not be the same
+        one.
+
+        They were, and that is what took the Home tab down. `onLayout` reports
+        the height the view currently occupies, that height went into state,
+        the animated style multiplied it by `progress`, the height changed, and
+        `onLayout` fired again - once per frame of the animation, each one a
+        layout pass and a state update. It is not an exception, so no error
+        boundary ever saw it: the loop just pinned the layout channel, nothing
+        painted, and the app stopped responding.
+
+        It also only happened once a quest had been completed, because these
+        blocks are the personal records and the recent activity - empty before
+        that, so the body never mounted and the loop never started. Clearing
+        app data emptied them again, which is why it kept looking intermittent.
+
+        So the inner view carries the measurement and lays out at its natural
+        height; the outer one is animated and clips. The inner height is
+        therefore not a function of the outer's, and the feedback cannot close.
+      */}
       {mounted ? (
-        <Animated.View
-          onLayout={event => setHeight(event.nativeEvent.layout.height)}
-          style={bodyStyle}
-        >
-          <View>{children}</View>
+        <Animated.View style={bodyStyle}>
+          <View
+            onLayout={event => {
+              const next = event.nativeEvent.layout.height;
+              // A no-op layout still arrives; do not turn it into a render.
+              setHeight(current => (current === next ? current : next));
+            }}
+          >
+            {children}
+          </View>
         </Animated.View>
       ) : null}
     </View>
   );
 }
+
+/**
+ * Exported for the test that pins the measurement invariant - see
+ * __tests__/collapsible_block.test.tsx. The block itself is internal to this
+ * screen; exposing it is cheaper than extracting a component for one test.
+ */
+export const __CollapsibleBlockForTests = CollapsibleBlock;
 
 /** Small stable hash, used only to stagger an entrance by quest id. */
 function hashSlot(value: string): number {

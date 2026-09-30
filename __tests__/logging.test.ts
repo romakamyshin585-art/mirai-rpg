@@ -97,11 +97,14 @@ describe('rolling on-disk log', () => {
   /**
    * The whole point of the second copy. `documentDirectory` is unreadable by
    * any file manager without root, so the user cannot reach the log that way;
-   * the app-specific external directory is the one place on Android 10 that a
-   * file manager can actually open, and the app may write it with no
-   * permission at all.
+   * shared storage is the one place they can. The path is the real one from
+   * their file manager - /storage/emulated/0/Download - because /sdcard is a
+   * symlink the native check does not follow, and that is exactly what
+   * 0.4.7's log reported:
+   *
+   *   java.io.IOException: Location '/sdcard/Download/' isn't writable.
    */
-  test('a copy lands in the external folder a file manager can open', async () => {
+  test('a copy lands in the real Download folder a file manager can open', async () => {
     const { logCheckpoint } = require('../src/ui/logging');
     logCheckpoint('home', 'load done');
     // Two visible targets now, each an await chain of its own, so this has to
@@ -111,14 +114,30 @@ describe('rolling on-disk log', () => {
       await Promise.resolve();
     }
 
-    const visible = mockWrites.filter(w => w.path.startsWith('/sdcard/'));
+    const visible = mockWrites.filter(w => w.path.startsWith('/storage/emulated/0/'));
     expect(visible.length).toBeGreaterThanOrEqual(2);
-    // Download is the one a file manager on Android 10 can always be relied on
-    // to show, so it is the one that matters.
-    const download = visible.find(w => w.path.startsWith('/sdcard/Download/'));
+    const download = visible.find(w => w.path === '/storage/emulated/0/Download/mirai-rpg.log');
     expect(download).toBeDefined();
-    expect(download!.path.endsWith('mirai-rpg.log')).toBe(true);
     expect(download!.contents).toContain('load done');
+  });
+
+  /**
+   * Downloads is part of the platform and already exists. Asking
+   * expo-file-system to create it is the call the OS rejected, so the write
+   * must be attempted directly.
+   */
+  test('the Download copy does not try to create the directory', async () => {
+    const fs = require('expo-file-system');
+    fs.makeDirectoryAsync.mockClear();
+    const { logCheckpoint } = require('../src/ui/logging');
+    logCheckpoint('home', 'no directory needed here');
+    for (let i = 0; i < 12; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.resolve();
+    }
+    const created = fs.makeDirectoryAsync.mock.calls.map((call: unknown[]) => String(call[0]));
+    expect(created.some((dir: string) => dir.includes('Download'))).toBe(false);
+    expect(created.some((dir: string) => dir.includes('com.mirai.rpg'))).toBe(true);
   });
 
   test('a refused visible write leaves the private copy intact', async () => {

@@ -42,17 +42,26 @@ function logDirectory(): string | null {
  * folder the user can open *before* they think to look, without launching
  * anything.
  *
- *  - Download: visible in every file manager, in the Downloads app, over USB
- *    without root. Needs legacy external storage on Android 10, which the build
- *    now requests - with it off, the OS refused the write and the catch
- *    swallowed it, which is why 0.4.7 produced no folder at all.
- *  - Android/data: the app-specific external folder. Free to write, but some
- *    OEM skins hide it from file managers, so it is a second copy, not the
- *    first.
+ * The path is the real one the user reported from their own file manager,
+ * /storage/emulated/0/Download. An earlier version used /sdcard/Download and
+ * the log says exactly why that was wrong:
+ *
+ *   java.io.IOException: Location '/sdcard/Download/' isn't writable.
+ *
+ * - and the same for Android/data. Both were refused, the catch swallowed the
+ * refusal, and 0.4.7 produced no file at all while the app looked perfectly
+ * healthy. /sdcard is a symlink, and the native path check does not follow it
+ * the way the shell does.
+ *
+ * Neither directory is created: Downloads is part of the platform and always
+ * exists, and asking expo-file-system to make a directory in shared storage is
+ * the call that was rejected. The app's own Android/data folder does not exist
+ * yet, so that one is created - and if it is refused the Downloads copy has
+ * already landed.
  */
-const VISIBLE_TARGETS: { label: string; dir: string }[] = [
-  { label: 'Download', dir: '/sdcard/Download/' },
-  { label: 'Android/data', dir: '/sdcard/Android/data/com.mirai.rpg/files/' },
+const VISIBLE_TARGETS: { label: string; dir: string; ensureDir: boolean }[] = [
+  { label: 'Download', dir: '/storage/emulated/0/Download/', ensureDir: false },
+  { label: 'Android/data', dir: '/storage/emulated/0/Android/data/com.mirai.rpg/files/', ensureDir: true },
 ];
 
 const results: Record<string, string> = {};
@@ -62,8 +71,10 @@ async function writeVisibleCopies(): Promise<void> {
   for (const target of VISIBLE_TARGETS) {
     const path = `${target.dir}${FILE_NAME}`;
     try {
-      const info = await (FileSystem as any).getInfoAsync(target.dir);
-      if (!info.exists) await (FileSystem as any).makeDirectoryAsync(target.dir, { intermediates: true });
+      if (target.ensureDir) {
+        const info = await (FileSystem as any).getInfoAsync(target.dir);
+        if (!info.exists) await (FileSystem as any).makeDirectoryAsync(target.dir, { intermediates: true });
+      }
       await FileSystem.writeAsStringAsync(path, body);
       results[target.label] = `written (${path})`;
     } catch (error) {
