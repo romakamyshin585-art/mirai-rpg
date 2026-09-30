@@ -21,6 +21,7 @@ jest.mock('expo-file-system', () => ({
   }),
   readAsStringAsync: jest.fn(async () => (mockHasPrevious ? 'PREV  old-session-line\nPREV  another' : '')),
   getInfoAsync: jest.fn(async () => ({ exists: mockHasPrevious })),
+  makeDirectoryAsync: jest.fn(async () => undefined),
 }));
 
 describe('rolling on-disk log', () => {
@@ -87,5 +88,37 @@ describe('rolling on-disk log', () => {
     const { logCheckpoint } = require('../src/ui/logging');
     expect(() => logCheckpoint('home', 'still fine')).not.toThrow();
     await Promise.resolve();
+  });
+
+  /**
+   * The whole point of the second copy. `documentDirectory` is unreadable by
+   * any file manager without root, so the user cannot reach the log that way;
+   * the app-specific external directory is the one place on Android 10 that a
+   * file manager can actually open, and the app may write it with no
+   * permission at all.
+   */
+  test('a copy lands in the external folder a file manager can open', async () => {
+    const { logCheckpoint } = require('../src/ui/logging');
+    logCheckpoint('home', 'load done');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const external = mockWrites.find(w => w.path.startsWith('/sdcard/Android/data/com.mirai.rpg/files/'));
+    expect(external).toBeDefined();
+    expect(external!.path.endsWith('mirai-rpg.log')).toBe(true);
+    expect(external!.contents).toContain('load done');
+  });
+
+  test('a refused external write leaves the private copy intact', async () => {
+    const fs = require('expo-file-system');
+    fs.makeDirectoryAsync = jest.fn(async () => {
+      throw new Error('EACCES');
+    });
+    const { logCheckpoint } = require('../src/ui/logging');
+    expect(() => logCheckpoint('home', 'private still written')).not.toThrow();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockWrites.some(w => w.path.includes('mirai-rpg.log') && !w.path.startsWith('/sdcard'))).toBe(true);
   });
 });

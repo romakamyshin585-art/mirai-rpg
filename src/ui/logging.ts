@@ -32,6 +32,36 @@ function logDirectory(): string | null {
   return typeof dir === 'string' ? dir : null;
 }
 
+/**
+ * A second copy, somewhere a file manager can actually see.
+ *
+ * `documentDirectory` is the app's private directory - on Android it lives
+ * under /data/data/<package>/, which no file manager may read without root,
+ * which is why "where is the com.mirai.rpg folder" has no answer and searching
+ * for it finds nothing. It is not hidden, it is unreachable.
+ *
+ * The app-specific *external* directory is different: the owning app may
+ * always write there without a single permission, and on Android 10 - which is
+ * what this phone runs - it is visible in the stock file manager and in Total
+ * Commander. So the log lands there too, and the user can copy the file out and
+ * attach it, with no PC, no USB debugging and no clipboard round trip.
+ *
+ * Best effort by design: a phone that refuses the write still gets the private
+ * copy, and the in-app button still works.
+ */
+const EXTERNAL_DIR = '/sdcard/Android/data/com.mirai.rpg/files/';
+const EXTERNAL_FILE = `${EXTERNAL_DIR}${FILE_NAME}`;
+
+async function writeExternalCopy(): Promise<void> {
+  try {
+    const info = await (FileSystem as any).getInfoAsync(EXTERNAL_DIR);
+    if (!info.exists) await (FileSystem as any).makeDirectoryAsync(EXTERNAL_DIR, { intermediates: true });
+    await FileSystem.writeAsStringAsync(EXTERNAL_FILE, serialise());
+  } catch {
+    // Not fatal: the private copy is the authoritative one.
+  }
+}
+
 export function logFilePath(): string | null {
   if (logPath) return logPath;
   const dir = logDirectory();
@@ -120,6 +150,7 @@ export function logCheckpoint(tag: string, text: string): void {
     writeTimer = null;
   }
   void writeNow();
+  void writeExternalCopy();
 }
 
 export function setUncaughtForLog(detail: string): void {
@@ -149,7 +180,8 @@ export function readDiagnostics(): string {
     `app version: ${readAppVersion()}`,
     `lines kept: ${lines.length}`,
     `last uncaught: ${lastUncaughtError ?? 'none recorded'}`,
-    `log file: ${logFilePath() ?? 'unavailable'}`,
+    `private log: ${logFilePath() ?? 'unavailable'}`,
+    `visible copy: ${EXTERNAL_FILE}`,
     '',
     'LAST LINES BEFORE THE PROBLEM',
     stuck,
