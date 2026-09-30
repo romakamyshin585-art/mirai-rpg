@@ -307,4 +307,50 @@ describe('Home after a quest has been completed', () => {
     const rendered = consoleError.mock.calls.map((c: any[]) => `${String(c[0])} ${(c[1] && c[1].message) || ''}`);
     expect(rendered.filter(line => /error|Error|undefined is not|cannot read/i.test(line))).toEqual([]);
   });
+
+  test('the radar pulse is mounted even when nothing has changed', async () => {
+    // It used to be `{pulseIndex >= 0 && ... ? <RadarPulse/> : null}`, which
+    // made it the only component on Home that exists solely after a quest is
+    // completed - and therefore the only one that could only ever appear on
+    // the frame where the screen broke. It is mounted unconditionally now and
+    // hidden by its own opacity, so its animated view always has a target.
+    const { RadarChart } = require('../src/ui/components/RadarChart');
+    const zero = [
+      { category: 'health', value: 0, xp: 0, questsCompleted: 0, weeklyChange: 0 },
+      { category: 'knowledge', value: 0, xp: 0, questsCompleted: 0, weeklyChange: 0 },
+      { category: 'career', value: 0, xp: 0, questsCompleted: 0, weeklyChange: 0 },
+      { category: 'discipline', value: 0, xp: 0, questsCompleted: 0, weeklyChange: 0 },
+      { category: 'social', value: 0, xp: 0, questsCompleted: 0, weeklyChange: 0 },
+    ];
+
+    let tree!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = TestRenderer.create(
+        <OverlayProvider>
+          <ThemeProvider>
+            <RadarChart data={zero} />
+          </ThemeProvider>
+        </OverlayProvider>,
+        RENDER_OPTIONS,
+      );
+    });
+    await flush(4);
+
+    const nodes = (function walk(node: any, acc: any[] = []): any[] {
+      if (!node || typeof node !== 'object') return acc;
+      acc.push(node);
+      (node.children ?? []).forEach((child: unknown) => walk(child, acc));
+      return acc;
+    })(tree.root);
+
+    // styles.pulse is 18x18 with radius 9 - unique to the pulse.
+    const pulses = nodes.filter(node => {
+      const style = node.props?.style;
+      const flat = (Array.isArray(style) ? style.flat(3) : [style]).filter(Boolean);
+      return flat.some(
+        (entry: any) => typeof entry === 'object' && entry.width === 18 && entry.borderRadius === 9,
+      );
+    });
+    expect(pulses.length).toBeGreaterThan(0);
+  });
 });

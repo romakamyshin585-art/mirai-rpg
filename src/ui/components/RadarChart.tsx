@@ -24,6 +24,7 @@ import { CATEGORIES, type Category } from '../../domain/category';
 import { CATEGORY_LABELS, useTheme } from '../theme';
 import { LucideIcon } from '../components';
 import { MotionPressable } from './MotionPressable';
+import { logEvent } from '../logging';
 import { duration, spring, useReducedMotion } from '../motion';
 import {
   BADGE_SIZE,
@@ -173,6 +174,15 @@ export function RadarChart({ data, onSelect, selected = null }: RadarChartProps)
 
   const ready = width > 0;
 
+  // Which animated piece of this chart is alive, in order. The bisect proved
+  // the freeze lives in the animation layer; this names the piece, so the next
+  // log says which one mounted last before the screen stopped responding
+  // instead of the log ending at a render census.
+  useEffect(() => {
+    logEvent('radar', `chart ready=${ready} pulseIndex=${pulseIndex}`);
+  }, [pulseIndex, ready]);
+
+
   return (
     <View
       accessibilityLabel="Диаграмма характеристик персонажа"
@@ -316,14 +326,29 @@ export function RadarChart({ data, onSelect, selected = null }: RadarChartProps)
             })}
           </View>
 
-          {pulseIndex >= 0 && points[pulseIndex] ? (
-            <RadarPulse
-              x={points[pulseIndex].x}
-              y={points[pulseIndex].y}
-              color={colorForCategory(CATEGORIES[pulseIndex])}
-              progress={pulse}
-            />
-          ) : null}
+          {/*
+            Always mounted, never conditionally.
+
+            The pulse used to appear only when an axis changed, which made it
+            the one component on Home that exists only after a quest is
+            completed - and therefore the one that only ever appears on the
+            frame where this screen broke. It is a view whose style is written
+            from the UI thread by a shared value that is animating at that
+            exact moment, so it is exactly the shape that has no target to
+            write to if the mount and the animation race.
+
+            So it is mounted unconditionally and hidden by its own opacity at
+            rest, which is the same contract Toast and CelebrationOverlay
+            already follow: see the mounting note in toast.tsx. The radius and
+            scale are the pulse; the fade is what makes "not pulsing" invisible
+            rather than absent.
+          */}
+          <RadarPulse
+            x={points[pulseIndex]?.x ?? center}
+            y={points[pulseIndex]?.y ?? center}
+            color={colorForCategory(CATEGORIES[pulseIndex] ?? CATEGORIES[0])}
+            progress={pulse}
+          />
         </View>
       </Animated.View>
       {!ready ? <View style={{ height: MIN_BOX }} /> : null}
@@ -369,6 +394,7 @@ function AxisPod({
     if (reduced) {
       entrance.value = withTiming(1, { duration: duration.reducedMotion });
     } else {
+      logEvent('radar', `pod ${index} entrance scheduled reduced=${reduced}`);
       entrance.value = withDelay(
         90 + index * 65,
         withSequence(
@@ -514,7 +540,11 @@ function RadarVertex({
 
 function RadarPulse({ x, y, color, progress }: { x: number; y: number; color: string; progress: SharedValue<number> }) {
   const style = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 1], [0.7, 0], Extrapolate.CLAMP),
+    // Zero means "not pulsing", and it has to be genuinely invisible rather
+    // than absent, because this view is mounted whether or not a pulse is
+    // running. The 0..0.02 ramp is where the ring fades in; by 1 it is gone
+    // again. Both ends at zero opacity, nothing pops.
+    opacity: interpolate(progress.value, [0, 0.02, 1], [0, 0.7, 0], Extrapolate.CLAMP),
     transform: [{ scale: 0.7 + progress.value * 0.8 }],
   }));
   return <Animated.View pointerEvents="none" style={[styles.pulse, { left: x - 9, top: y - 9, backgroundColor: color }, style]} />;
