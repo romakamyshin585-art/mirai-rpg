@@ -52,13 +52,19 @@ function logDirectory(): string | null {
 const EXTERNAL_DIR = '/sdcard/Android/data/com.mirai.rpg/files/';
 const EXTERNAL_FILE = `${EXTERNAL_DIR}${FILE_NAME}`;
 
+/** Whether the external copy actually made it, so a report can say so. */
+let externalWriteOk: boolean | null = null;
+
 async function writeExternalCopy(): Promise<void> {
   try {
     const info = await (FileSystem as any).getInfoAsync(EXTERNAL_DIR);
     if (!info.exists) await (FileSystem as any).makeDirectoryAsync(EXTERNAL_DIR, { intermediates: true });
     await FileSystem.writeAsStringAsync(EXTERNAL_FILE, serialise());
+    externalWriteOk = true;
   } catch {
-    // Not fatal: the private copy is the authoritative one.
+    // Not fatal: the private copy is the authoritative one, and sharing the
+    // file does not depend on this at all.
+    externalWriteOk = false;
   }
 }
 
@@ -117,6 +123,51 @@ export async function initLogging(): Promise<void> {
     // ignore
   }
   logEvent('app', `log opened at v${readAppVersion()}`);
+  // Written at startup, not only on the next checkpoint: a user who installs
+  // and goes straight to the file manager to look for the log must find one.
+  void writeNow();
+  void writeExternalCopy();
+}
+
+/**
+ * Put the log in the cache directory and hand it to the system share sheet.
+ *
+ * This is the path that cannot be defeated by Android's storage rules. The
+ * private directory is unreadable without root; the app-specific external
+ * directory is at the mercy of the OEM, and on this phone the write silently
+ * did not happen at all. The share sheet sidesteps both: the user picks where
+ * it goes, and the system grants access for that one file.
+ *
+ * Same mechanism the backup export already uses, so it is known to work on
+ * this build.
+ */
+export async function shareLog(): Promise<{ shared: boolean; fileName: string; fileUri: string }> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const fileName = `mirai-rpg-log-${stamp}.txt`;
+  const dir = (FileSystem as any).cacheDirectory ?? logDirectory();
+  const fileUri = `${dir}${fileName}`;
+
+  if (!dir) return { shared: false, fileName, fileUri: '' };
+
+  await FileSystem.writeAsStringAsync(fileUri, readDiagnostics(), {
+    encoding: FileSystem.EncodingType.UTF8,
+  });
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+    const Sharing = require('expo-sharing') as typeof import('expo-sharing');
+    if (!(await Sharing.isAvailableAsync())) return { shared: false, fileName, fileUri };
+    await Sharing.shareAsync(fileUri, {
+      mimeType: 'text/plain',
+      dialogTitle: 'Отправить лог Mirai RPG',
+      UTI: 'public.plain-text',
+    });
+    return { shared: true, fileName, fileUri };
+  } catch {
+    // The file is written either way; the caller can fall back to the
+    // clipboard, and the path is in the diagnostics text.
+    return { shared: false, fileName, fileUri };
+  }
 }
 
 function readAppVersion(): string {
@@ -181,7 +232,7 @@ export function readDiagnostics(): string {
     `lines kept: ${lines.length}`,
     `last uncaught: ${lastUncaughtError ?? 'none recorded'}`,
     `private log: ${logFilePath() ?? 'unavailable'}`,
-    `visible copy: ${EXTERNAL_FILE}`,
+    `visible copy: ${EXTERNAL_FILE} (${externalWriteOk === null ? 'not attempted' : externalWriteOk ? 'written' : 'write refused by the OS'})`,
     '',
     'LAST LINES BEFORE THE PROBLEM',
     stuck,

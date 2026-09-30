@@ -19,7 +19,7 @@ import * as Clipboard from 'expo-clipboard';
 import { LucideIcon } from '../components';
 import { MotionPressable } from './MotionPressable';
 import { Overlay } from './Overlay';
-import { readDiagnostics, readLogText } from '../logging';
+import { readDiagnostics, readLogText, shareLog } from '../logging';
 import { useTheme } from '../theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -31,7 +31,7 @@ type DiagnosticsSheetProps = {
 export function DiagnosticsSheet({ visible, onClose }: DiagnosticsSheetProps) {
   const { colors, radius, typography } = useTheme();
   const insets = useSafeAreaInsets();
-  const [state, setState] = useState<'idle' | 'working' | 'copied' | 'failed'>('idle');
+  const [state, setState] = useState<'idle' | 'working' | 'copied' | 'sent' | 'failed'>('idle');
 
   const copy = useCallback(async () => {
     setState('working');
@@ -40,6 +40,16 @@ export function DiagnosticsSheet({ visible, onClose }: DiagnosticsSheetProps) {
       // on request so a paste into a chat stays readable.
       await Clipboard.setStringAsync(readDiagnostics());
       setState('copied');
+    } catch {
+      setState('failed');
+    }
+  }, []);
+
+  const send = useCallback(async () => {
+    setState('working');
+    try {
+      const result = await shareLog();
+      setState(result.shared ? 'sent' : 'copied');
     } catch {
       setState('failed');
     }
@@ -85,30 +95,35 @@ export function DiagnosticsSheet({ visible, onClose }: DiagnosticsSheetProps) {
           <Text style={[styles.mono, { color: colors.textMuted }]}>{preview}</Text>
         </ScrollView>
 
-        <MotionPressable
-          accessibilityRole="button"
-          accessibilityLabel="Скопировать лог"
-          onPress={() => void copy()}
-          style={[styles.button, { backgroundColor: colors.accent }]}
-        >
-          {state === 'working' ? (
-            <ActivityIndicator size="small" color={colors.textInverse} />
-          ) : (
-            <Text style={[typography.bodyStrong, { color: colors.textInverse }]}>
-              {state === 'copied'
-                ? 'Скопировано — вставьте в чат'
-                : state === 'failed'
-                  ? 'Не удалось скопировать'
-                  : 'Скопировать лог'}
-            </Text>
-          )}
-        </MotionPressable>
+        <View style={styles.actions}>
+          <MotionPressable
+            accessibilityRole="button"
+            accessibilityLabel="Отправить лог файлом"
+            onPress={() => void send()}
+            style={[styles.action, { backgroundColor: colors.accent }]}
+          >
+            {state === 'working' ? (
+              <ActivityIndicator size="small" color={colors.textInverse} />
+            ) : (
+              <Text style={[typography.bodyStrong, { color: colors.textInverse }]}>
+                {state === 'sent' ? 'Отправлено' : 'Отправить файлом'}
+              </Text>
+            )}
+          </MotionPressable>
+
+          <MotionPressable
+            accessibilityRole="button"
+            accessibilityLabel="Скопировать лог"
+            onPress={() => void copy()}
+            style={[styles.action, { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+          >
+            <Text style={[typography.bodyStrong, { color: colors.text }]}>В буфер обмена</Text>
+          </MotionPressable>
+        </View>
 
         <Text style={[styles.foot, { color: colors.textMuted }]}>
-          Если приложение зависло и лог не открывается: подключите телефон к компьютеру с
-          включённой отладкой по USB и выполните
-          {'\n'}
-          adb logcat -d | findstr MiraiRPG
+          «Отправить файлом» надёжнее: Android не даёт прочитать лог из папки приложения без
+          root, а системное окно «Поделиться» само передаёт файл в мессенджер или почту.
         </Text>
       </View>
     </Overlay>
@@ -124,7 +139,8 @@ const styles = StyleSheet.create({
   preview: { marginTop: 12, marginBottom: 12, maxHeight: 240 },
   previewContent: { padding: 10, borderRadius: 10 },
   mono: { fontFamily: 'monospace', fontSize: 10, lineHeight: 14 },
-  button: { minHeight: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  actions: { flexDirection: 'row', gap: 10 },
+  action: { flex: 1, minHeight: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   foot: { fontSize: 10, lineHeight: 15, textAlign: 'center', marginTop: 10, paddingHorizontal: 6 },
 });
 

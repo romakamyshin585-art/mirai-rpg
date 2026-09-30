@@ -16,6 +16,10 @@ jest.mock('expo-file-system', () => ({
   get documentDirectory() {
     return 'file:///mock/';
   },
+  get cacheDirectory() {
+    return 'file:///mock/cache/';
+  },
+  EncodingType: { UTF8: 'utf8', Base64: 'base64' },
   writeAsStringAsync: jest.fn(async (path: string, contents: string) => {
     mockWrites.push({ path, contents });
   }),
@@ -120,5 +124,48 @@ describe('rolling on-disk log', () => {
     await Promise.resolve();
 
     expect(mockWrites.some(w => w.path.includes('mirai-rpg.log') && !w.path.startsWith('/sdcard'))).toBe(true);
+  });
+
+  /**
+   * The share path is the one that cannot be defeated by storage rules: the
+   * private directory needs root, and on this phone the external write was
+   * refused outright. The file must land in the cache and be handed to the
+   * share sheet - and if the sheet is unavailable the file still has to exist,
+   * because the diagnostics text names its path.
+   */
+  test('the log is written as a file and handed to the share sheet', async () => {
+    jest.mock('expo-sharing', () => ({
+      isAvailableAsync: jest.fn(async () => true),
+      shareAsync: jest.fn(async () => undefined),
+    }));
+    const Sharing = require('expo-sharing');
+    const { logEvent, shareLog } = require('../src/ui/logging');
+    logEvent('home', 'a distinctive line for the report');
+
+    const result = await shareLog();
+
+    expect(result.shared).toBe(true);
+    expect(result.fileName).toMatch(/^mirai-rpg-log-.*\.txt$/);
+    expect(Sharing.shareAsync).toHaveBeenCalledWith(
+      result.fileUri,
+      expect.objectContaining({ mimeType: 'text/plain' }),
+    );
+    const written = mockWrites.find(w => w.path === result.fileUri);
+    expect(written).toBeDefined();
+    expect(written!.contents).toContain('MIRAI RPG DIAGNOSTICS');
+    expect(written!.contents).toContain('a distinctive line for the report');
+  });
+
+  test('a refused share sheet still leaves the file on disk', async () => {
+    jest.mock('expo-sharing', () => ({
+      isAvailableAsync: jest.fn(async () => true),
+      shareAsync: jest.fn(async () => {
+        throw new Error('no target');
+      }),
+    }));
+    const { shareLog } = require('../src/ui/logging');
+    const result = await shareLog();
+    expect(result.shared).toBe(false);
+    expect(mockWrites.some(w => w.path === result.fileUri)).toBe(true);
   });
 });
