@@ -8,6 +8,6 @@
  *
  * Keep this in step with `version` in app.json and `version` in package.json.
  */
-export const APP_VERSION = '0.4.10';
+export const APP_VERSION = '0.4.11';
 
 export default APP_VERSION;

@@ -34,53 +34,111 @@ function logDirectory(): string | null {
 }
 
 /**
- * Where a copy is written so the user can reach it without root.
+ * Saving the log where the user can actually open it.
  *
- * Order matters, and the first one is the point of all this. The app's private
- * directory is unreadable by any file manager, and the failure being chased
- * freezes the app on its very first screen - so the log has to be sitting in a
- * folder the user can open *before* they think to look, without launching
- * anything.
- *
- * The path is the real one the user reported from their own file manager,
- * /storage/emulated/0/Download. An earlier version used /sdcard/Download and
- * the log says exactly why that was wrong:
+ * Written after the log said, twice, that it was not there:
  *
  *   java.io.IOException: Location '/sdcard/Download/' isn't writable.
+ *   java.io.IOException: Location '/sdcard/Android/data/com.mirai.rpg/files/' isn't writable.
  *
- * - and the same for Android/data. Both were refused, the catch swallowed the
- * refusal, and 0.4.7 produced no file at all while the app looked perfectly
- * healthy. /sdcard is a symlink, and the native path check does not follow it
- * the way the shell does.
+ * That is Android's scoped storage, and no permission fixes it. The app targets
+ * a modern SDK, so from Android 10 on, a plain path write into shared storage
+ * is refused by the OS - `WRITE_EXTERNAL_STORAGE` is a no-op there, and
+ * `requestLegacyExternalStorage` is ignored for any target above 29. Guessing
+ * at paths and hoping is what produced two builds with no file.
  *
- * Neither directory is created: Downloads is part of the platform and always
- * exists, and asking expo-file-system to make a directory in shared storage is
- * the call that was rejected. The app's own Android/data folder does not exist
- * yet, so that one is created - and if it is refused the Downloads copy has
- * already landed.
+ * So this uses the platform's own mechanism instead of fighting it. The
+ * Storage Access Framework hands the app a real handle to a folder the user
+ * picks, and every write after that grant is an ordinary write to a directory
+ * the app legitimately owns. One confirmation, once, and the log then lands in
+ * Downloads on its own.
+ *
+ * The private copy is still written first and unconditionally: it needs no
+ * grant and is the one that survives if the user never taps the button.
  */
-const VISIBLE_TARGETS: { label: string; dir: string; ensureDir: boolean }[] = [
-  { label: 'Download', dir: '/storage/emulated/0/Download/', ensureDir: false },
-  { label: 'Android/data', dir: '/storage/emulated/0/Android/data/com.mirai.rpg/files/', ensureDir: true },
-];
+const SAF_FOLDER = 'Download';
 
 const results: Record<string, string> = {};
 
-async function writeVisibleCopies(): Promise<void> {
-  const body = serialise();
-  for (const target of VISIBLE_TARGETS) {
-    const path = `${target.dir}${FILE_NAME}`;
-    try {
-      if (target.ensureDir) {
-        const info = await (FileSystem as any).getInfoAsync(target.dir);
-        if (!info.exists) await (FileSystem as any).makeDirectoryAsync(target.dir, { intermediates: true });
-      }
-      await FileSystem.writeAsStringAsync(path, body);
-      results[target.label] = `written (${path})`;
-    } catch (error) {
-      results[target.label] = `refused: ${error instanceof Error ? error.message : String(error)}`;
+function saf(): any {
+  return (FileSystem as any).StorageAccessFramework ?? null;
+}
+
+/**
+ * Ask once, then reuse. The grant is persisted by Android, so this is a no-op
+ * on every launch after the first.
+ */
+async function requestSafDirectory(): Promise<string | null> {
+  const api = saf();
+  if (!api) return null;
+  try {
+    // The Downloads tree URI, so the system picker opens there rather than at
+    // an arbitrary folder.
+    const initial = api.getUriForDirectoryInRoot(SAF_FOLDER);
+    const permissions = await api.requestDirectoryPermissionsAsync(initial);
+    if (!permissions || !permissions.granted || !permissions.directoryUri) {
+      results[`SAF ${SAF_FOLDER}`] = 'not granted yet - the app has no folder handle';
+      return null;
     }
+    results[`SAF ${SAF_FOLDER}`] = `granted (${permissions.directoryUri})`;
+    return permissions.directoryUri;
+  } catch (error) {
+    results[`SAF ${SAF_FOLDER}`] = `unavailable: ${error instanceof Error ? error.message : String(error)}`;
+    return null;
   }
+}
+
+/** One file, rewritten in place - SAF has no append and no in-place write. */
+async function writeSafCopy(body: string): Promise<void> {
+  const api = saf();
+  if (!api) {
+    results[`SAF ${SAF_FOLDER}`] = 'not available in this build of expo-file-system';
+    return;
+  }
+  const directoryUri = (await ensureSafDirectory()) ?? null;
+  if (!directoryUri) return;
+
+  const fileName = FILE_NAME;
+  try {
+    const existing = await api.readDirectoryAsync(directoryUri);
+    const match = (existing ?? []).find((entry: any) => entry?.name === fileName);
+    if (match?.uri) {
+      await api.writeAsStringAsync(match.uri, body);
+      results[`SAF ${SAF_FOLDER}`] = `rewritten (${match.uri})`;
+      return;
+    }
+    const created = await api.createFileAsync(directoryUri, fileName, 'text/plain');
+    await api.writeAsStringAsync(created, body);
+    results[`SAF ${SAF_FOLDER}`] = `created in Downloads (${created})`;
+  } catch (error) {
+    results[`SAF ${SAF_FOLDER}`] = `write failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+let safDirectory: string | null = null;
+let safAttempted = false;
+
+async function ensureSafDirectory(): Promise<string | null> {
+  if (safDirectory) return safDirectory;
+  if (safAttempted) return null;
+  safAttempted = true;
+  safDirectory = await requestSafDirectory();
+  return safDirectory;
+}
+
+/**
+ * Used by the diagnostics sheet: the grant has to be requested from a user
+ * gesture, so it cannot live in the background write path.
+ */
+export async function grantLogFolder(): Promise<{ ok: boolean; detail: string }> {
+  safAttempted = false;
+  const directoryUri = await requestSafDirectory();
+  if (!directoryUri) {
+    return { ok: false, detail: results[`SAF ${SAF_FOLDER}`] ?? 'no folder handle' };
+  }
+  safDirectory = directoryUri;
+  await writeSafCopy(serialise());
+  return { ok: true, detail: results[`SAF ${SAF_FOLDER}`] ?? 'granted' };
 }
 
 export function logFilePath(): string | null {
@@ -148,7 +206,7 @@ export async function initLogging(): Promise<void> {
   // Written at startup, not only on the next checkpoint: a user who installs
   // and goes straight to the file manager to look for the log must find one.
   void writeNow();
-  void writeVisibleCopies();
+  void writeSafCopy(serialise());
 }
 
 /**
@@ -223,7 +281,7 @@ export function logCheckpoint(tag: string, text: string): void {
     writeTimer = null;
   }
   void writeNow();
-  void writeVisibleCopies();
+  void writeSafCopy(serialise());
 }
 
 export function setUncaughtForLog(detail: string): void {
@@ -281,7 +339,7 @@ export function readDiagnostics(): string {
     `lines kept: ${lines.length}`,
     `last uncaught: ${lastUncaughtError ?? 'none recorded'}`,
     `private log: ${logFilePath() ?? 'unavailable'}`,
-    ...VISIBLE_TARGETS.map(target => `visible copy [${target.label}]: ${results[target.label] ?? 'not attempted'}`),
+    `Downloads (SAF): ${results[`SAF ${SAF_FOLDER}`] ?? 'never attempted - press "Allow writing to Downloads" in Diagnostics'}`,
     `safe start check: ${lastSessionDiedInsideHome() ? 'the last session stopped inside Home' : 'the last session ended normally'}`,
     '',
     'LAST LINES BEFORE THE PROBLEM',

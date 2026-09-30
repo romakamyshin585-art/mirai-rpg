@@ -19,7 +19,7 @@ import * as Clipboard from 'expo-clipboard';
 import { LucideIcon } from '../components';
 import { MotionPressable } from './MotionPressable';
 import { Overlay } from './Overlay';
-import { readDiagnostics, readLogText, shareLog } from '../logging';
+import { grantLogFolder, readDiagnostics, readLogText, shareLog } from '../logging';
 import { useTheme } from '../theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -31,7 +31,8 @@ type DiagnosticsSheetProps = {
 export function DiagnosticsSheet({ visible, onClose }: DiagnosticsSheetProps) {
   const { colors, radius, typography } = useTheme();
   const insets = useSafeAreaInsets();
-  const [state, setState] = useState<'idle' | 'working' | 'copied' | 'sent' | 'failed'>('idle');
+  const [state, setState] = useState<'idle' | 'working' | 'copied' | 'sent' | 'failed' | 'granted'>('idle');
+  const [grant, setGrant] = useState<string | null>(null);
 
   const copy = useCallback(async () => {
     setState('working');
@@ -50,6 +51,17 @@ export function DiagnosticsSheet({ visible, onClose }: DiagnosticsSheetProps) {
     try {
       const result = await shareLog();
       setState(result.shared ? 'sent' : 'copied');
+    } catch {
+      setState('failed');
+    }
+  }, []);
+
+  const allowDownloads = useCallback(async () => {
+    setState('working');
+    try {
+      const result = await grantLogFolder();
+      setGrant(result.detail);
+      setState(result.ok ? 'granted' : 'copied');
     } catch {
       setState('failed');
     }
@@ -98,6 +110,17 @@ export function DiagnosticsSheet({ visible, onClose }: DiagnosticsSheetProps) {
         <View style={styles.actions}>
           <MotionPressable
             accessibilityRole="button"
+            accessibilityLabel="Разрешить запись лога в Загрузки"
+            onPress={() => void allowDownloads()}
+            style={[styles.action, { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, borderWidth: 1 }]}
+          >
+            <Text style={[typography.bodyStrong, { color: colors.text }]}>
+              {state === 'granted' ? 'Загрузки разрешены' : 'Разрешить «Загрузки»'}
+            </Text>
+          </MotionPressable>
+
+          <MotionPressable
+            accessibilityRole="button"
             accessibilityLabel="Отправить лог файлом"
             onPress={() => void send()}
             style={[styles.action, { backgroundColor: colors.accent }]}
@@ -117,13 +140,20 @@ export function DiagnosticsSheet({ visible, onClose }: DiagnosticsSheetProps) {
             onPress={() => void copy()}
             style={[styles.action, { backgroundColor: colors.surfaceElevated, borderColor: colors.borderSubtle, borderWidth: 1 }]}
           >
-            <Text style={[typography.bodyStrong, { color: colors.text }]}>В буфер обмена</Text>
+            <Text style={[typography.bodyStrong, { color: colors.text }]}>В буфер</Text>
           </MotionPressable>
         </View>
 
+        {grant ? (
+          <Text style={[styles.foot, { color: colors.textMuted }]} numberOfLines={3}>
+            {grant}
+          </Text>
+        ) : null}
+
         <Text style={[styles.foot, { color: colors.textMuted }]}>
-          «Отправить файлом» надёжнее: Android не даёт прочитать лог из папки приложения без
-          root, а системное окно «Поделиться» само передаёт файл в мессенджер или почту.
+          Android не даёт писать в «Загрузки» без разрешения — это системное ограничение, а не
+          ошибка. Нажмите «Разрешить Загрузки» один раз: приложение спросит папку, и после
+          этого лог будет сам сохраняться в mirai-rpg.log.
         </Text>
       </View>
     </Overlay>

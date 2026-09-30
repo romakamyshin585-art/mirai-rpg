@@ -95,74 +95,94 @@ describe('rolling on-disk log', () => {
   });
 
   /**
-   * The whole point of the second copy. `documentDirectory` is unreadable by
-   * any file manager without root, so the user cannot reach the log that way;
-   * shared storage is the one place they can. The path is the real one from
-   * their file manager - /storage/emulated/0/Download - because /sdcard is a
-   * symlink the native check does not follow, and that is exactly what
-   * 0.4.7's log reported:
+   * The Downloads copy goes through the Storage Access Framework, because the
+   * log says plainly why a plain path cannot work on a modern target:
    *
    *   java.io.IOException: Location '/sdcard/Download/' isn't writable.
+   *
+   * No permission changes that - `WRITE_EXTERNAL_STORAGE` is a no-op from
+   * Android 10 on, and `requestLegacyExternalStorage` is ignored above target
+   * 29. SAF is the platform's own answer: the user grants a folder once and
+   * every write after that is an ordinary write.
    */
-  test('a copy lands in the real Download folder a file manager can open', async () => {
-    const { logCheckpoint } = require('../src/ui/logging');
+  test('a grant writes the log into the granted folder', async () => {
+    const fs = require('expo-file-system');
+    fs.StorageAccessFramework = {
+      getUriForDirectoryInRoot: jest.fn((name: string) => `content://tree/${name}`),
+      requestDirectoryPermissionsAsync: jest.fn(async () => ({
+        granted: true,
+        directoryUri: 'content://tree/primary:Download',
+      })),
+      readDirectoryAsync: jest.fn(async () => []),
+      createFileAsync: jest.fn(async () => 'content://tree/primary:Download/mirai-rpg.log'),
+      writeAsStringAsync: jest.fn(async () => undefined),
+    };
+    const { logCheckpoint, grantLogFolder, readDiagnostics } = require('../src/ui/logging');
     logCheckpoint('home', 'load done');
-    // Two visible targets now, each an await chain of its own, so this has to
-    // let the microtask queue drain rather than tick a fixed twice.
-    for (let i = 0; i < 12; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      await Promise.resolve();
-    }
 
-    const visible = mockWrites.filter(w => w.path.startsWith('/storage/emulated/0/'));
-    expect(visible.length).toBeGreaterThanOrEqual(2);
-    const download = visible.find(w => w.path === '/storage/emulated/0/Download/mirai-rpg.log');
-    expect(download).toBeDefined();
-    expect(download!.contents).toContain('load done');
+    const result = await grantLogFolder();
+
+    expect(result.ok).toBe(true);
+    expect(fs.StorageAccessFramework.createFileAsync).toHaveBeenCalledWith(
+      'content://tree/primary:Download',
+      'mirai-rpg.log',
+      'text/plain',
+    );
+    expect(fs.StorageAccessFramework.writeAsStringAsync).toHaveBeenCalled();
+    expect(readDiagnostics()).toContain('created in Downloads');
   });
 
-  /**
-   * Downloads is part of the platform and already exists. Asking
-   * expo-file-system to create it is the call the OS rejected, so the write
-   * must be attempted directly.
-   */
-  test('the Download copy does not try to create the directory', async () => {
+  test('a refused grant is reported and never throws', async () => {
     const fs = require('expo-file-system');
-    fs.makeDirectoryAsync.mockClear();
+    fs.StorageAccessFramework = {
+      getUriForDirectoryInRoot: jest.fn(() => 'content://tree/Download'),
+      requestDirectoryPermissionsAsync: jest.fn(async () => ({ granted: false })),
+      readDirectoryAsync: jest.fn(async () => []),
+      createFileAsync: jest.fn(),
+      writeAsStringAsync: jest.fn(),
+    };
+    const { grantLogFolder, readDiagnostics } = require('../src/ui/logging');
+    const result = await grantLogFolder();
+    expect(result.ok).toBe(false);
+    expect(readDiagnostics()).toContain('not granted yet');
+  });
+
+  test('the private copy is written whether or not a folder was granted', async () => {
+    const fs = require('expo-file-system');
+    fs.StorageAccessFramework = undefined;
     const { logCheckpoint } = require('../src/ui/logging');
-    logCheckpoint('home', 'no directory needed here');
+    logCheckpoint('home', 'private copy regardless');
     for (let i = 0; i < 12; i += 1) {
       // eslint-disable-next-line no-await-in-loop
       await Promise.resolve();
     }
-    const created = fs.makeDirectoryAsync.mock.calls.map((call: unknown[]) => String(call[0]));
-    expect(created.some((dir: string) => dir.includes('Download'))).toBe(false);
-    expect(created.some((dir: string) => dir.includes('com.mirai.rpg'))).toBe(true);
+    expect(mockWrites.some(w => w.path === 'file:///mock/mirai-rpg.log')).toBe(true);
   });
 
-  test('a refused visible write leaves the private copy intact', async () => {
+  test('an existing SAF file is rewritten, not duplicated', async () => {
     const fs = require('expo-file-system');
-    fs.makeDirectoryAsync = jest.fn(async () => {
-      throw new Error('EACCES');
-    });
-    fs.getInfoAsync = jest.fn(async () => ({ exists: false }));
-    const { logCheckpoint, readDiagnostics } = require('../src/ui/logging');
-    expect(() => logCheckpoint('home', 'private still written')).not.toThrow();
-    for (let i = 0; i < 12; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      await Promise.resolve();
-    }
-
-    expect(mockWrites.some(w => w.path === 'file:///mock/mirai-rpg.log')).toBe(true);
-    expect(readDiagnostics()).toContain('refused');
+    const createFile = jest.fn();
+    fs.StorageAccessFramework = {
+      getUriForDirectoryInRoot: jest.fn(() => 'content://tree/Download'),
+      requestDirectoryPermissionsAsync: jest.fn(async () => ({
+        granted: true,
+        directoryUri: 'content://tree/primary:Download',
+      })),
+      readDirectoryAsync: jest.fn(async () => [{ name: 'mirai-rpg.log', uri: 'content://existing' }]),
+      createFileAsync: createFile,
+      writeAsStringAsync: jest.fn(async () => undefined),
+    };
+    const { grantLogFolder } = require('../src/ui/logging');
+    await grantLogFolder();
+    expect(createFile).not.toHaveBeenCalled();
+    expect(fs.StorageAccessFramework.writeAsStringAsync).toHaveBeenCalledWith('content://existing', expect.any(String));
   });
 
   /**
-   * The share path is the one that cannot be defeated by storage rules: the
-   * private directory needs root, and on this phone the external write was
-   * refused outright. The file must land in the cache and be handed to the
-   * share sheet - and if the sheet is unavailable the file still has to exist,
-   * because the diagnostics text names its path.
+   * The share sheet is the other route out, and the one that needs no grant:
+   * the file is written to the cache and handed to the system, which passes it
+   * to wherever the user picks. It must still leave the file on disk when the
+   * sheet is unavailable, because the diagnostics text names its path.
    */
   test('the log is written as a file and handed to the share sheet', async () => {
     jest.mock('expo-sharing', () => ({
