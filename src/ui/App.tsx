@@ -294,7 +294,7 @@ function AppContent() {
             </MotionPressable>
           </View>
         ) : null}
-        <DiagnosticsSheet visible={showDiagnostics} onClose={() => setShowDiagnostics(false)} />
+        <DiagnosticsSheet visible={showDiagnostics} onClose={() => setShowDiagnostics(false)} ctx={ctx} />
       </View>
     </View>
   );

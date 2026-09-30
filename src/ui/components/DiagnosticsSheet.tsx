@@ -21,18 +21,35 @@ import { MotionPressable } from './MotionPressable';
 import { Overlay } from './Overlay';
 import { grantLogFolder, readDiagnostics, readLogText, shareLog } from '../logging';
 import { useTheme } from '../theme';
+import { areAnimationsDisabled, setAnimationsDisabled } from '../motion';
+import type { AppContext } from '../app_context';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type DiagnosticsSheetProps = {
   visible: boolean;
   onClose: () => void;
+  /** Needed for the animation switch: it persists into the app's own config. */
+  ctx?: AppContext | null;
 };
 
-export function DiagnosticsSheet({ visible, onClose }: DiagnosticsSheetProps) {
+export function DiagnosticsSheet({ visible, onClose, ctx }: DiagnosticsSheetProps) {
   const { colors, radius, typography } = useTheme();
   const insets = useSafeAreaInsets();
   const [state, setState] = useState<'idle' | 'working' | 'copied' | 'sent' | 'failed' | 'granted'>('idle');
   const [grant, setGrant] = useState<string | null>(null);
+  const [animationsOff, setAnimationsOff] = useState(() => areAnimationsDisabled());
+
+  const toggleAnimations = useCallback(async () => {
+    if (!ctx) return;
+    const next = !animationsOff;
+    setAnimationsOff(next);
+    setAnimationsDisabled(next);
+    try {
+      await ctx.setAnimationsDisabled(next);
+    } catch {
+      // The in-memory switch still applies for this session.
+    }
+  }, [animationsOff, ctx]);
 
   const copy = useCallback(async () => {
     setState('working');
@@ -150,6 +167,45 @@ export function DiagnosticsSheet({ visible, onClose }: DiagnosticsSheetProps) {
           </Text>
         ) : null}
 
+        {/*
+          The bisect. Freezing Home is reproducible only on the device, and the
+          last log line names the step but not the cause. Switching the whole
+          animation layer off - one switch, every Reanimated worklet in the app
+          takes its static path - answers "is it the animations?" in a single
+          tap. It is kept either way: a phone that struggles with animations
+          gets a working app.
+        */}
+        <MotionPressable
+          accessibilityRole="switch"
+          accessibilityState={{ checked: animationsOff }}
+          accessibilityLabel="Отключить все анимации"
+          onPress={() => void toggleAnimations()}
+          style={[
+            styles.switchRow,
+            { backgroundColor: colors.surface, borderColor: colors.borderSubtle },
+          ]}
+        >
+          <View style={styles.switchCopy}>
+            <Text style={[typography.bodyStrong, { color: colors.text }]}>Отключить анимации</Text>
+            <Text style={[typography.caption, { color: colors.textMuted }]}>
+              Выключает все анимации сразу — нужно, чтобы найти причину зависания главной.
+            </Text>
+          </View>
+          <View
+            style={[
+              styles.switchTrack,
+              { backgroundColor: animationsOff ? colors.accent : colors.surfaceElevated },
+            ]}
+          >
+            <View
+              style={[
+                styles.switchKnob,
+                { backgroundColor: colors.textInverse, alignSelf: animationsOff ? 'flex-end' : 'flex-start' },
+              ]}
+            />
+          </View>
+        </MotionPressable>
+
         <Text style={[styles.foot, { color: colors.textMuted }]}>
           Android не даёт писать в «Загрузки» без разрешения — это системное ограничение, а не
           ошибка. Нажмите «Разрешить Загрузки» один раз: приложение спросит папку, и после
@@ -172,6 +228,10 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', gap: 10 },
   action: { flex: 1, minHeight: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   foot: { fontSize: 10, lineHeight: 15, textAlign: 'center', marginTop: 10, paddingHorizontal: 6 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, borderRadius: 14, borderWidth: 1, marginTop: 10 },
+  switchCopy: { flex: 1, gap: 2 },
+  switchTrack: { width: 46, height: 26, borderRadius: 13, padding: 3, justifyContent: 'center' },
+  switchKnob: { width: 20, height: 20, borderRadius: 10 },
 });
 
 export default DiagnosticsSheet;

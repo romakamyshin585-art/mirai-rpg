@@ -17,8 +17,10 @@ import { QuestService } from '../services/quest_service';
 import { ProgressionService } from '../services/progression_service';
 import { AchievementService } from '../services/achievement_service';
 import { UserRepo } from '../repos/user_repo';
+import { setAnimationsDisabled } from './motion';
 
 const USER_ID_KEY = 'user_id';
+const ANIMATIONS_KEY = 'animations';
 
 function genUserId(): string {
   return 'u_' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
@@ -63,6 +65,7 @@ export class AppContext {
       ctx.achievement = new AchievementService(ctx.db);
       console.log('[MiraiRPG] AppContext.init: ensuring user ID');
       ctx.userId = await ctx._ensureUserId();
+      await ctx._loadPreferences();
       await ctx.achievement.syncFromHistory(ctx.userId);
       console.log('[MiraiRPG] AppContext.init: getting/creating character');
       await ctx.character.getOrCreate(ctx.userId, 'Hero');
@@ -87,6 +90,41 @@ export class AppContext {
 
   private async _openDb(): Promise<DbExecutor> {
     return await getExecutor();
+  }
+
+  /**
+   * Load the app's own switches before any screen mounts.
+   *
+   * `animationsDisabled` has to be known before the first animated component
+   * renders, which means it cannot be read lazily inside a hook: React would
+   * have to re-render to hear about it. Init already gates the tab host behind
+   * the context being set, so reading it here is early enough and in time.
+   */
+  async _loadPreferences(): Promise<void> {
+    try {
+      const row = await this.db.one<{ value: string }>(
+        `SELECT value FROM config WHERE key = ${sqlText(ANIMATIONS_KEY)}`,
+      );
+      setAnimationsDisabled(row?.value === 'off');
+    } catch {
+      // A missing key simply means animations are on, which is the default.
+    }
+  }
+
+  /** Persisted so a bisect survives the restart that is part of the test. */
+  async setAnimationsDisabled(disabled: boolean): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires, global-require
+    setAnimationsDisabled(disabled);
+    await this.db.exec(
+      `INSERT OR REPLACE INTO config (key, value) VALUES (${sqlText(ANIMATIONS_KEY)}, ${sqlText(disabled ? 'off' : 'on')})`,
+    );
+  }
+
+  async areAnimationsDisabled(): Promise<boolean> {
+    const row = await this.db.one<{ value: string }>(
+      `SELECT value FROM config WHERE key = ${sqlText(ANIMATIONS_KEY)}`,
+    );
+    return row?.value === 'off';
   }
 
   /**

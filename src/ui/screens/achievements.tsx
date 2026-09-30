@@ -297,7 +297,7 @@ export function AchievementsScreen({ ctx, revision, celebrationCodes, onDataChan
           }}
         />
       ) : null}
-      <DiagnosticsSheet visible={showDiagnostics} onClose={() => setShowDiagnostics(false)} />
+      <DiagnosticsSheet visible={showDiagnostics} onClose={() => setShowDiagnostics(false)} ctx={ctx} />
       <AchievementDetails
         item={selected}
         onClose={() => setSelected(null)}

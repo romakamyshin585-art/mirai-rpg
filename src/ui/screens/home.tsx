@@ -340,7 +340,11 @@ export function HomeScreen({ ctx, revision, onOpenQuests, onOpenQuest, onOpenAch
     ].join('|');
     const repeats = fingerprint === lastFingerprintRef.current ? renderCountRef.current : 1;
     if (repeats === 1 || repeats === 2 || repeats === 25 || repeats % 200 === 0) {
-      logEvent('home-render', `#${renderCountRef.current} same=${repeats} ${fingerprint}`);
+      // A checkpoint, not a buffered line. This is the line that has to
+      // survive whatever kills the screen: the deferred write races the freeze
+      // and loses, and a missing line is the difference between knowing where
+      // it stopped and guessing again.
+      logCheckpoint('home-render', `#${renderCountRef.current} same=${repeats} ${fingerprint}`);
     }
     lastFingerprintRef.current = fingerprint;
   }

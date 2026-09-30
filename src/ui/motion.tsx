@@ -61,8 +61,40 @@ function getEasing(tier: MotionTier) {
   return Easing.out(Easing.cubic);
 }
 
+/**
+ * The whole app asks this one question before it animates anything.
+ *
+ * It now has a second input. A user can force it on from the diagnostics
+ * screen, which switches off every Reanimated worklet in the app at once - the
+ * spring and timing branches all take the static path, nothing runs on the UI
+ * thread, and no animated view ever needs a live target.
+ *
+ * That exists because of a freeze that no test could reproduce. Home, with a
+ * completed quest, renders correctly under the test renderer - the census
+ * confirms the phone's exact state, `bests=2 activity=1 completions=1` - and
+ * still hangs on the device, where worklets and layout actually run. So either
+ * the cause is in the animation layer or it is not, and this makes that a
+ * single tap to find out instead of another guess. It is also worth keeping
+ * whatever the answer turns out to be: a phone that struggles with animations
+ * gets a working app.
+ */
+let animationsDisabled = false;
+
+export function setAnimationsDisabled(disabled: boolean): void {
+  animationsDisabled = disabled;
+}
+
+export function areAnimationsDisabled(): boolean {
+  return animationsDisabled;
+}
+
 export function useReducedMotion(): boolean {
-  return useReanimatedReducedMotion();
+  // The hook is called unconditionally and the flag is OR-ed in afterwards.
+  // Returning early above it would register the hook on some renders and not
+  // others - "Rendered more hooks than during the previous render", the very
+  // failure this repo spent two releases chasing.
+  const system = useReanimatedReducedMotion();
+  return animationsDisabled || system;
 }
 
 export function createSpring(value: number, tier: MotionTier = 'standard', config?: { delay?: number }) {
